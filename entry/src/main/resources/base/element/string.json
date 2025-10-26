@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "微步运动，生命在于运动"
+    },
+    {
+      "name": "step_reason",
+      "value": "请求获取运动步数"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "微步运动，生命在于运动"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "微步运动"
+    }
+  ]
+}

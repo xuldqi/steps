@@ -1,0 +1,29 @@
+# HarmonyOS/OpenHarmony
+build/
+entry/build/
+hvigor/
+.ohpm/
+oh_modules/
+local.properties
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Node modules (if any)
+node_modules/
+
+# Generated files
+*.generated.*

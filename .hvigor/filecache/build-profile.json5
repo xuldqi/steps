@@ -1,0 +1,66 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "release",
+        "material": {
+          "storeFile": "steps32.p12",
+          "storePassword": "00000018399A0941450A72460692F4570465FA234472C7D65FCD38D73FF906E371B57B85924EC7D3",
+          "keyAlias": "novcat",
+          "keyPassword": "0000001896D24ADF42509E659E279113334FDBEDEB6F995C4F52F426F261F9046A403C9FCD0B06C0",
+          "signAlg": "SHA256withECDSA",
+          "profile": "steps32Release.p7b",
+          "certpath": "stepsnew32.cer"
+        }
+      },
+      {
+        "name": "default",
+        "material": {
+          "certpath": "/Users/macmima1234/Documents/harmony/StepSportszc/stepsnew32.cer",
+          "keyAlias": "novcat",
+          "keyPassword": "00000018E49EE571575005E70CFCD0B9556BA318DB4495911D62C55246629AE9F6CBBCFABFBDB7BF",
+          "profile": "/Users/macmima1234/Documents/harmony/StepSportszc/steps32Release.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/macmima1234/Documents/harmony/StepSportszc/steps32.p12",
+          "storePassword": "00000018637EB99A20CA6C305CF740BA077E7B2F4384329C598DC8845C9C7FFF1CDF994B8A4F388E"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "compileSdkVersion": "6.0.0(20)",
+        "compatibleSdkVersion": "5.0.0(12)",
+        "targetSdkVersion": "6.0.0(20)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": false
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

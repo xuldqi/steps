@@ -1,0 +1,29 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/XYPage",
+    "pages/YSPage",
+    "pages/MainTabs",
+    "pages/WebPage",
+    "pages/ListCollectPage",
+    "pages/ListSharePage",
+    "pages/AdvicePage",
+    "pages/TargetSetPage",
+    "pages/BodyDataPage",
+    "pages/CountTimePage",
+    "pages/SportingPage",
+    "pages/SportStartingPage",
+    "pages/ChartPage",
+    "pages/SportTargetSetPage",
+    "pages/SportRecordPage",
+    "pages/SettingPage",
+    "pages/LoginPage",
+    "pages/BitMapPage",
+    "pages/EditMainCardPage",
+    "pages/WaterRecordPage",
+    "pages/BowelRecordPage",
+    "pages/MenstruationRecordPage",
+    "pages/SleepRecordPage",
+    "pages/MoodRecordPage"
+  ]
+}

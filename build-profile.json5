@@ -1,0 +1,68 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "release",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/macmima1234/.ohos/config/release_StepSportszc_G7axQxNi3BAtiwIxHDVCZ-tPIaTvEAck0KJ3so3OijE=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001BDE779B6E372CA059A6089CA8481B2E57B76ADC8D5EBCB2DF036B1557E9F404AC5E53A32360AA5F",
+          "profile": "/Users/macmima1234/.ohos/config/release_StepSportszc_G7axQxNi3BAtiwIxHDVCZ-tPIaTvEAck0KJ3so3OijE=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/macmima1234/.ohos/config/release_StepSportszc_G7axQxNi3BAtiwIxHDVCZ-tPIaTvEAck0KJ3so3OijE=.p12",
+          "storePassword": "0000001B0D07DFE4C27A4DC7919E9449CAAFCA0CD65EC6385823277E928A9B4D003D2C7F939DBD480D85D2"
+        }
+      },
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/macmima1234/Documents/harmony/StepSportszc/stepsnew32.cer",
+          "keyAlias": "novcat",
+          "keyPassword": "00000018F25FD3015E7FA84B5D12B577E6038BC6B6C05A3EEE47BFBAB33683D8E3BE2507EA1D4F3A",
+          "profile": "/Users/macmima1234/Documents/harmony/StepSportszc/steps32Release.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/macmima1234/Documents/harmony/StepSportszc/steps32.p12",
+          "storePassword": "000000187ABDA27208029472AB7632943DD9853C0E8C83257A16721A69F4E5EBFC4B0EEFEFF1D3CA"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "compileSdkVersion": "5.0.0(12)",
+        "compatibleSdkVersion": "5.0.0(12)",
+        "targetSdkVersion": "5.0.0(12)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": false
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}
