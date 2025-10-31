@@ -27,16 +27,17 @@ class DataPreUtils {
 
   async putPreferenceValue(name: string, key: string, value: preferences.ValueType) {
     if (!this.preferencesMap.has(name)) {
-      Log.i(`Preference[${name}]尚未初始化`);
-      //结束异步
-      Promise.reject("`Preference[${name}]尚未初始化`")
+      Log.e(`Preference[${name}]尚未初始化，无法保存数据`);
+      return
     }
     try {
       let preference = this.preferencesMap.get(name)
+      Log.i(`正在保存Preferences[${name}.${key}=${value}]`)
       //写入数据
       await preference!.put(key, value)
       //刷新磁盘
-      preference!.flush()
+      await preference!.flush()
+      Log.i(`成功保存Preferences[${name}.${key}=${value}]`)
     } catch (e) {
       Log.e(`保存Preferences[${name}.${key}=${value}]失败:`+JSON.stringify(e));
     }

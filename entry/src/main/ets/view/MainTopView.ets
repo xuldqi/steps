@@ -42,7 +42,15 @@ export struct MainTopView {
       }.margin(10).alignItems(VerticalAlign.Bottom)
       Text(this.formData.tarStepsHintStr).fontSize(10).fontColor('#FFFFFF')
         .margin(10).alignSelf(ItemAlign.Start)
-    }.padding(5).backgroundColor('#0cc291').borderRadius(20).width('95%')
+    }
+    .padding(5)
+    .backgroundColor('#0cc291')
+    .borderRadius(20)
+    .width('95%')
+    .onClick(() => {
+      // 点击今日步数跳转到步数统计页面
+      router.pushUrl({ url: 'pages/StepTrendPage' })
+    })
     //头部的绿色区域 end
   }
 }

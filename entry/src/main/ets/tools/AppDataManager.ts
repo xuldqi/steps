@@ -80,7 +80,7 @@ export class AppDataManager {
   /**
    * 插入运动数据
    * */
-  public insertSportRecord(startTime:number,useTime:number,steps:number,type:number,subType:number,cal:string){
+  public insertSportRecord(startTime:number,useTime:number,steps:number,type:number,subType:number,cal:string,onSuccess?: () => void){
     let obj: relationalStore.ValuesBucket = {};
     obj.start_time = startTime;
     obj.use_time = useTime;
@@ -89,7 +89,10 @@ export class AppDataManager {
     obj.sub_type = subType;
     obj.cal = cal;
     Log.i(`insertSportRecord`);
-    this.addDbData(SqlData.StepCountDbColumns_TB_NAME,obj)
+    this.addDbData(SqlData.StepCountDbColumns_TB_NAME,obj, () => {
+      this.setSportDataStatus(true, type)
+      onSuccess?.()
+    })
   }
 
   /**
@@ -702,7 +705,7 @@ export class AppDataManager {
   /**
    * 查插入数据
    * */
-  private addDbData(table:string,valueBucket:relationalStore.ValuesBucket){
+  private addDbData(table:string,valueBucket:relationalStore.ValuesBucket,onSuccess?: (rowId: number) => void){
     if(this.sqlData == null){
       Log.i(`addDbData error. sqlData null`);
     }
@@ -713,6 +716,7 @@ export class AppDataManager {
           return;
         }
         Log.i(`Succeeded addDbData. rowId:${rowId}`);
+        onSuccess?.(rowId)
       })
     }
   }

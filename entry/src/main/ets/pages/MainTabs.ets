@@ -1,6 +1,6 @@
 
 import {Log} from '../tools/Logger'
-import mainCardManager from '../tools/MainCardManager'
+import mainCardManager, { MainCardManager } from '../tools/MainCardManager'
 import { ArrayList } from '@kit.ArkTS'
 import { Utils } from '../tools/Utils'
 import { BannerView } from '../view/BannerView'
@@ -12,10 +12,13 @@ import StepData, { StepsCallback } from '../appdata/StepData'
 import preferencesUtil from '../tools/DataPreUtils'
 import { MainCardData, MainCardView } from '../view/MainCardView'
 import AppDataManager, { AllSportCallback, DataCallback, ModelCallback } from '../tools/AppDataManager'
-import { router } from '@kit.ArkUI'
+import { router, window } from '@kit.ArkUI'
 import EntryAbility from '../entryability/EntryAbility'
 import { DateUtils } from '../tools/DateUtils'
-import { SportModel } from '../appdata/Model'
+import { SportModel, PerStepModel } from '../appdata/Model'
+import { AppStateStore } from '../services/AppStateStore'
+import type { AppState } from '../models/AppModels'
+import targetManager, { TargetValue } from '../tools/TargetManager'
 
 interface GoalProgressItem {
   key: string,
@@ -37,6 +40,23 @@ interface HealthFeatureItem {
   route: string,
 }
 
+interface BodyOverviewCard {
+  title: string
+  value: string
+  unit?: string
+  icon: Resource
+  badgeBackground: string
+  noteColor?: string
+  onTap?: () => void
+}
+
+interface MainCardMetrics {
+  subtitle: string
+  value: string
+  prevTitle?: string
+  prevValue?: string
+}
+
 @Entry
 @Component
 struct MainTabs {
@@ -50,9 +70,15 @@ struct MainTabs {
   @State tabColor: string = '#F5F5F5'
   private controller: TabsController = new TabsController()
   private subController: TabsController = new TabsController();
-  private panOptionLeft: PanGestureOptions = new PanGestureOptions({ direction: PanDirection.Left });
   private panOptionRight: PanGestureOptions = new PanGestureOptions({ direction: PanDirection.Right });
   private scroller: Scroller = new Scroller()
+  private sportSubScrollers: Array<Scroller> = [
+    new Scroller(),
+    new Scroller(),
+    new Scroller(),
+    new Scroller(),
+    new Scroller()
+  ]
   private tarSteps:number = 5000
 
   @State formData: TopData = {
@@ -103,7 +129,7 @@ struct MainTabs {
 
   @State userImg: PixelMap | undefined = undefined;
   @State userName: string = '未登录用户'//累计跑步距离
-  @State userCode: string = '登录功能开发中'//累计跑步距离
+  @State userCode: string = '华为账号登录'//登录提示
 
   @State userData1: UserData = {
     title:'周报总结',
@@ -118,6 +144,15 @@ struct MainTabs {
     data: '0金币',
     subData: '历史获得0金币'
   }
+
+  // 身体数据状态
+  @State currentHeight: number = 0
+  @State currentWeight: number = 0
+  @State basalMetabolism: number = 0
+  @State bmi: number = 0
+  @State bmiStatus: string = ''
+  @State userAge: number = 25
+  @State userGender: string = 'male'
 
   @State targetProgress: Array<GoalProgressItem> = [
     { key: 'calorie', label: '热量消耗', unit: '千卡', color: '#FF8C47', current: 0, target: DEFAULT_CALORIE_TARGET },
@@ -166,6 +201,9 @@ struct MainTabs {
   @State  line1:Array<MainCardData> = new Array<MainCardData>();//第一行卡片数组
   @State  line2:Array<MainCardData> = new Array<MainCardData>();//第二行卡片数组
   @State  line3:Array<MainCardData> = new Array<MainCardData>();//第三行卡片数组
+  @State cardMetrics: Record<number, MainCardMetrics> = {}
+  @State currentDateStr: string = DateUtils.getYMD()
+  private dateWatcherId: number = 0
 
   private calorieTargetSetting: number = DEFAULT_CALORIE_TARGET
   private timeTargetSetting: number = DEFAULT_TIME_TARGET
@@ -174,12 +212,51 @@ struct MainTabs {
   private currentCalories: number = 0
   private currentSportMinutes: number = 0
   private currentActivityCount: number = 0
+  private appStore = AppStateStore.getInstance()
+  private unsubscribe: (() => void) | null = null
 
   aboutToAppear(): void {
+    this.unsubscribe?.()
+    this.unsubscribe = this.appStore.subscribe((state: AppState) => {
+      this.applyAppState(state)
+    })
     this.syncUserProfile()
     this.loadGoalTargets()
     this.requestTodaySportSummary()
     this.loadDailyQuote()
+    this.currentDateStr = DateUtils.getYMD()
+    this.startDailyWatcher()
+    targetManager.addListener(this.onTargetsChanged)
+  }
+
+  aboutToDisappear(): void {
+    targetManager.removeListener(this.onTargetsChanged)
+  }
+
+  private onTargetsChanged = (targets: TargetValue) => {
+    const newCalorieTarget = targets.calorie_target
+    const newTimeTarget = targets.exercise_time_target
+    const newActivityTarget = targets.activity_count_target
+    const newStepTarget = targets.step_target
+    
+    if (this.calorieTargetSetting !== newCalorieTarget) {
+      this.calorieTargetSetting = newCalorieTarget
+      this.updateGoalProgressItem('calorie', this.currentCalories, this.calorieTargetSetting)
+    }
+    if (this.timeTargetSetting !== newTimeTarget) {
+      this.timeTargetSetting = newTimeTarget
+      this.updateGoalProgressItem('time', this.currentSportMinutes, this.timeTargetSetting)
+    }
+    if (this.activityTargetSetting !== newActivityTarget) {
+      this.activityTargetSetting = newActivityTarget
+      this.updateGoalProgressItem('activity', this.currentActivityCount, this.activityTargetSetting)
+    }
+    if (this.tarSteps !== newStepTarget) {
+      this.tarSteps = newStepTarget
+      StepData.targetStepNum = this.tarSteps
+      this.formData.tarSteps = '/' + this.tarSteps + '步'
+      this.updateStepsView(StepData.getCurrentSteps())
+    }
   }
 
   private async syncUserProfile() {
@@ -192,7 +269,29 @@ struct MainTabs {
     }
     const storedCode = await preferencesUtil.getPreferenceValue('steps_ohos', 'userCode', this.userCode)
     if (typeof storedCode === 'string') {
-      this.userCode = storedCode === '立即登录' ? '登录功能开发中' : storedCode
+      this.userCode = storedCode === '登录功能开发中' ? '华为账号登录' : storedCode
+    }
+  }
+
+  private handleLoginTap(): void {
+    if (this.userName === '未登录用户') {
+      try {
+        router.pushUrl({ url: 'pages/LoginPage' }).catch((err: Error) => {
+          console.error('[MainTabs] 跳转登录页失败:', err.message);
+        });
+      } catch (err) {
+        console.error('[MainTabs] 跳转登录页异常:', err);
+      }
+    }
+  }
+
+  private applyAppState(state: AppState): void {
+    if (state && state.user) {
+      this.userName = state.user.nickname ?? '运动达人'
+      this.userCode = state.user.inviteCode ? `邀请码：${state.user.inviteCode}` : '已登录'
+    } else {
+      this.userName = '未登录用户'
+      this.userCode = '华为账号登录'
     }
   }
 
@@ -210,6 +309,20 @@ struct MainTabs {
 
       this.userData1.data = result + '步'
       this.userData1.subData = '总运动时长'+times+'分钟'
+    }
+  }
+
+  private yesterdayStepCallback:ModelCallback<PerStepModel> = {
+    onResult: (model: PerStepModel): void => {
+      const steps = model ? model.steps : 0
+      this.updateCardMetrics(MainCardManager.STEPS_DISTANCE, {
+        prevTitle: '昨天',
+        prevValue: this.formatDistance(steps)
+      })
+      this.updateCardMetrics(MainCardManager.STEPS_ENERGY, {
+        prevTitle: '昨天',
+        prevValue: this.formatCalories(steps)
+      })
     }
   }
 
@@ -244,6 +357,10 @@ struct MainTabs {
       this.formData.tarStepsHintStr = '还差'+(this.tarSteps -steps) +'步达到目标'
     }
     this.updateCalorieProgress(steps)
+    this.updateCardMetrics(MainCardManager.STEPS_DISTANCE, {
+      subtitle: '今日',
+      value: this.formatDistance(steps)
+    })
   }
 
 
@@ -270,7 +387,8 @@ struct MainTabs {
 
   async onPageShow(){
     //目标步数初始化
-    this.tarSteps = await preferencesUtil.getPreferenceValue('steps_ohos', 'step_target', 5000) as number
+    await targetManager.loadTargets()
+    this.tarSteps = targetManager.getTarget('step_target')
     StepData.targetStepNum = this.tarSteps
 
     //更新当前步数信息
@@ -278,8 +396,12 @@ struct MainTabs {
     this.formData.tarSteps = '/'+this.tarSteps+'步'
     //步数回调注册
     StepData.addCallback(this.stepsCallback)
+    this.loadYesterdayMetrics()
     //卡片信息更新
     this.updateMainCard()
+    
+    // 加载身体数据
+    this.loadBodyData()
 
     StepData.checkIsFirstOpenToday()//每次初始化一次步数信息
     //检查权限,注册步数监听
@@ -324,16 +446,15 @@ struct MainTabs {
 
   onPageHide(): void {
     StepData.removeCallback(this.stepsCallback)
+    this.stopDailyWatcher()
+    this.unsubscribe?.()
+    this.unsubscribe = null
   }
 
   /**
    * 更新卡片的列表
    * */
   private updateMainCard(){
-    //mainCardManager.saveItemCardData("1,2,3,4,5,6,");
-    if(!mainCardManager.getMainCardChanged()){
-      return;
-    }
     this.line1.length = 0;
     this.line2.length = 0;
     this.line3.length = 0;
@@ -341,36 +462,122 @@ struct MainTabs {
     let mainCards:ArrayList<number> = mainCardManager.getCardSet();
     for(let i=0;i<mainCards.length;i++){
       if(this.line1.length<2){
-        this.line1.push({item:mainCards[i],index:i})
+        this.line1.push(this.createMainCardData(mainCards[i], i))
         Log.i("line1:"+mainCards[i])
         continue
       }
       if(this.line2.length<2){
-        this.line2.push({item:mainCards[i],index:i-2})
+        this.line2.push(this.createMainCardData(mainCards[i], i-2))
         Log.i("line2:"+mainCards[i])
         continue
       }
       if(this.line3.length<2){
-        this.line3.push({item:mainCards[i],index:i-4})
+        this.line3.push(this.createMainCardData(mainCards[i], i-4))
         Log.i("line3:"+mainCards[i])
         continue
       }
     }
 
-    mainCardManager.setMainCardChangedAlreadyUpdate();
+    if (mainCardManager.getMainCardChanged()) {
+      mainCardManager.setMainCardChangedAlreadyUpdate();
+    }
+  }
+
+  private createMainCardData(item:number, index:number): MainCardData {
+    const metrics = this.cardMetrics[item]
+    const subtitle = metrics?.subtitle ?? AppDataManager.getMainCardSubStr(item)
+    const value = metrics?.value ?? AppDataManager.getMainCardSubData(item)
+    const prevTitle = metrics?.prevTitle ?? AppDataManager.getMainCardLastTitle(item)
+    const prevValue = metrics?.prevValue ?? AppDataManager.getMainCardLastData(item)
+    const data: MainCardData = {
+      item,
+      index,
+      subtitle,
+      value
+    }
+    if (prevTitle !== '' && prevValue !== '') {
+      data.prevTitle = prevTitle
+      data.prevValue = prevValue
+    }
+    return data
+  }
+
+  private updateCardMetrics(type: number, metrics: Partial<MainCardMetrics>) {
+    const previous: MainCardMetrics = this.cardMetrics[type] ?? {
+      subtitle: AppDataManager.getMainCardSubStr(type),
+      value: AppDataManager.getMainCardSubData(type)
+    }
+    const merged: MainCardMetrics = {
+      subtitle: metrics.subtitle ?? previous.subtitle,
+      value: metrics.value ?? previous.value,
+      prevTitle: metrics.prevTitle ?? previous.prevTitle,
+      prevValue: metrics.prevValue ?? previous.prevValue
+    }
+    this.cardMetrics[type] = merged
+    this.updateMainCard()
+  }
+
+  private startDailyWatcher() {
+    this.stopDailyWatcher()
+    const handler = setInterval(() => {
+      const today = DateUtils.getYMD()
+      if (today !== this.currentDateStr) {
+        this.currentDateStr = today
+        this.onNewDayArrived()
+      }
+    }, 60 * 1000)
+    this.dateWatcherId = handler as number
+  }
+
+  private stopDailyWatcher() {
+    if (this.dateWatcherId !== 0) {
+      clearInterval(this.dateWatcherId)
+      this.dateWatcherId = 0
+    }
+  }
+
+  private async onNewDayArrived() {
+    this.updateCardMetrics(MainCardManager.STEPS_DISTANCE, {
+      subtitle: '今日',
+      value: '0.0公里'
+    })
+    this.updateCardMetrics(MainCardManager.STEPS_ENERGY, {
+      subtitle: '今日',
+      value: '0千卡'
+    })
+    this.updateCardMetrics(MainCardManager.STEPS_SPORTS, {
+      subtitle: '当前',
+      value: '无数据',
+      prevTitle: '上次',
+      prevValue: '无数据'
+    })
+
+    await StepData.checkIsFirstOpenToday()
+    this.updateStepsView(StepData.getCurrentSteps())
+    this.requestTodaySportSummary()
+    await this.loadGoalTargets()
+    this.loadYesterdayMetrics()
+    this.loadDailyQuote()
+  }
+
+  private formatDistance(steps: number): string {
+    const distance = steps * 0.6 / 1000
+    return `${distance.toFixed(1)}公里`
+  }
+
+  private formatCalories(steps: number): string {
+    return `${Math.round(parseFloat(Utils.getKalByStep(steps)))}千卡`
+  }
+
+  private loadYesterdayMetrics() {
+    AppDataManager.getStepPerDay(DateUtils.getYMD_(1), this.yesterdayStepCallback)
   }
 
   private async loadGoalTargets() {
-    if (!preferencesUtil.preferencesMap.has('steps_ohos') && EntryAbility.context) {
-      await preferencesUtil.loadPreference(EntryAbility.context, 'steps_ohos')
-    }
-    const calorieTarget = await preferencesUtil.getPreferenceValue('steps_ohos', 'calorie_target', DEFAULT_CALORIE_TARGET) as number
-    const timeTarget = await preferencesUtil.getPreferenceValue('steps_ohos', 'exercise_time_target', DEFAULT_TIME_TARGET) as number
-    const activityTarget = await preferencesUtil.getPreferenceValue('steps_ohos', 'activity_count_target', DEFAULT_ACTIVITY_TARGET) as number
-
-    this.calorieTargetSetting = typeof calorieTarget === 'number' ? calorieTarget : DEFAULT_CALORIE_TARGET
-    this.timeTargetSetting = typeof timeTarget === 'number' ? timeTarget : DEFAULT_TIME_TARGET
-    this.activityTargetSetting = typeof activityTarget === 'number' ? activityTarget : DEFAULT_ACTIVITY_TARGET
+    await targetManager.loadTargets()
+    this.calorieTargetSetting = targetManager.getTarget('calorie_target')
+    this.timeTargetSetting = targetManager.getTarget('exercise_time_target')
+    this.activityTargetSetting = targetManager.getTarget('activity_count_target')
 
     this.updateGoalProgressItem('calorie', this.currentCalories, this.calorieTargetSetting)
     this.updateGoalProgressItem('time', this.currentSportMinutes, this.timeTargetSetting)
@@ -387,17 +594,61 @@ struct MainTabs {
     onDataResult: (type: number, result: Array<SportModel>, isReturnFirstData: boolean): void => {
       let totalMinutes = 0
       let qualifiedCount = 0
+      let totalCalories = 0
+      let totalDistance = 0
       for (const item of result) {
-        const minutes = Math.floor(item.use_time / 60)
+        const minutes = Math.max(0, Math.floor(item.use_time / 60000))
         if (minutes >= 2) {
           qualifiedCount += 1
           totalMinutes += minutes
+          totalDistance += item.steps * 0.6 / 1000
+          totalCalories += Number.parseFloat(item.cal ?? '0')
         }
       }
       this.currentSportMinutes = totalMinutes
       this.currentActivityCount = qualifiedCount
       this.updateGoalProgressItem('time', this.currentSportMinutes, this.timeTargetSetting)
       this.updateGoalProgressItem('activity', this.currentActivityCount, this.activityTargetSetting)
+      const summaryParts: Array<string> = []
+      if (qualifiedCount > 0) {
+        summaryParts.push(`${qualifiedCount}次`)
+      }
+      if (totalMinutes > 0) {
+        summaryParts.push(`${totalMinutes}分钟`)
+      }
+      if (totalCalories > 0) {
+        summaryParts.push(`${Math.round(totalCalories)}千卡`)
+      }
+      if (totalDistance > 0) {
+        summaryParts.push(`${totalDistance.toFixed(1)}公里`)
+      }
+      const currentSummary = summaryParts.length > 0 ? summaryParts.join(' · ') : '暂无记录'
+      const lastRecord = result.length > 0 ? result[result.length - 1] : undefined
+      let lastSummary = '暂无记录'
+      if (lastRecord) {
+        const lastMinutes = Math.max(0, Math.floor(lastRecord.use_time / 60000))
+        const lastCalories = Math.round(Number.parseFloat(lastRecord.cal ?? '0'))
+        const lastDistance = (lastRecord.steps * 0.6 / 1000).toFixed(1)
+        const lastParts: Array<string> = []
+        if (lastMinutes > 0) {
+          lastParts.push(`${lastMinutes}分钟`)
+        }
+        if (lastCalories > 0) {
+          lastParts.push(`${lastCalories}千卡`)
+        }
+        if (lastDistance !== '0.0') {
+          lastParts.push(`${lastDistance}公里`)
+        }
+        if (lastParts.length > 0) {
+          lastSummary = lastParts.join(' · ')
+        }
+      }
+      this.updateCardMetrics(MainCardManager.STEPS_SPORTS, {
+        subtitle: '今日',
+        value: currentSummary,
+        prevTitle: '上次',
+        prevValue: lastSummary
+      })
     }
   } as DataCallback<SportModel>
 
@@ -408,6 +659,10 @@ struct MainTabs {
     const calories = Number.parseFloat(Utils.getKalByStep(steps))
     this.currentCalories = calories
     this.updateGoalProgressItem('calorie', calories, this.calorieTargetSetting)
+    this.updateCardMetrics(MainCardManager.STEPS_ENERGY, {
+      subtitle: '今日',
+      value: `${Math.round(calories)}千卡`
+    })
   }
 
   private updateGoalProgressItem(key: string, current: number, target?: number) {
@@ -434,10 +689,7 @@ struct MainTabs {
     if (value <= 0) {
       return '0'
     }
-    if (value >= 100) {
-      return Math.round(value).toString()
-    }
-    return value.toFixed(1)
+    return Math.round(value).toString()
   }
 
   private computeProgressWidth(current: number, target: number): string {
@@ -452,6 +704,40 @@ struct MainTabs {
     // 基于当前日期选择每日警句
     const index = Math.abs(DateUtils.dateToTimestamp(DateUtils.getYMD())) % this.allQuotes.length
     this.dailyQuote = this.allQuotes[index]
+  }
+
+  private async loadBodyData() {
+    // 加载身体数据
+    this.currentHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'height', 170) as number
+    this.currentWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight', 60) as number
+    this.userAge = await preferencesUtil.getPreferenceValue('steps_ohos', 'age', 25) as number
+    this.userGender = await preferencesUtil.getPreferenceValue('steps_ohos', 'gender', 'male') as string
+    
+    // 计算BMI
+    if (this.currentHeight > 0 && this.currentWeight > 0) {
+      const heightInMeters = this.currentHeight / 100
+      this.bmi = this.currentWeight / (heightInMeters * heightInMeters)
+      
+      // 判断BMI状态
+      if (this.bmi < 18.5) {
+        this.bmiStatus = '过轻'
+      } else if (this.bmi < 24) {
+        this.bmiStatus = '正常'
+      } else if (this.bmi < 28) {
+        this.bmiStatus = '偏胖'
+      } else {
+        this.bmiStatus = '肥胖'
+      }
+    }
+    
+    // 计算基础代谢率
+    if (this.currentHeight > 0 && this.currentWeight > 0 && this.userAge > 0) {
+      if (this.userGender === 'male') {
+        this.basalMetabolism = 10 * this.currentWeight + 6.25 * this.currentHeight - 5 * this.userAge + 5
+      } else {
+        this.basalMetabolism = 10 * this.currentWeight + 6.25 * this.currentHeight - 5 * this.userAge - 161
+      }
+    }
   }
 
   private navigateToGoalDetail(goalKey: string) {
@@ -588,6 +874,172 @@ struct MainTabs {
     .margin({ top: 12 })
   }
 
+  @Builder buildBodyDataCards() {
+    Column() {
+      Row() {
+        Column() {
+        this.bodyDataCard(this.getHeightOverviewCard())
+        }
+        .layoutWeight(1)
+        .margin({ right: 8 })
+
+        Column() {
+          this.bodyDataCard(this.getWeightOverviewCard())
+        }
+        .layoutWeight(1)
+        .margin({ left: 8 })
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+
+      Row() {
+        Column() {
+          this.bodyDataCard(this.getBmrOverviewCard())
+        }
+        .layoutWeight(1)
+        .margin({ right: 8 })
+
+        Column() {
+          this.bodyDataCard(this.getBmiOverviewCard())
+        }
+        .layoutWeight(1)
+        .margin({ left: 8 })
+      }
+      .width('100%')
+    }
+    .width('92%')
+    .margin({ top: 12, bottom: 8 })
+  }
+
+  private resolveBmiColor(): string {
+    if (this.bmiStatus === '正常') {
+      return '#0cc291'
+    }
+    if (this.bmiStatus === '过轻') {
+      return '#5BA7FF'
+    }
+    if (this.bmiStatus === '偏胖') {
+      return '#FF9C57'
+    }
+    if (this.bmiStatus === '肥胖') {
+      return '#FF6B6B'
+    }
+    return '#666666'
+  }
+
+  private getHeightOverviewCard(): BodyOverviewCard {
+    return {
+      title: '我的身高',
+      value: this.currentHeight > 0 ? this.currentHeight.toFixed(1) : '--',
+      unit: this.currentHeight > 0 ? '厘米' : '',
+      icon: $r('app.media.icon_my_height'),
+      badgeBackground: 'rgba(98,214,176,0.18)',
+      onTap: () => {
+        console.info('[MainTabs] 点击身高卡片，跳转到身体数据页面并打开身高记录')
+        try {
+          router.pushUrl({ 
+            url: 'pages/BodyDataPage', 
+            params: { showHeightRecord: true } 
+          }).catch((err: Error) => {
+            console.error('[MainTabs] 跳转失败:', err.message)
+          })
+        } catch (err) {
+          console.error('[MainTabs] 跳转异常:', err)
+        }
+      }
+    }
+  }
+
+  private getWeightOverviewCard(): BodyOverviewCard {
+    return {
+      title: '我的体重',
+      value: this.currentWeight > 0 ? this.currentWeight.toFixed(1) : '--',
+      unit: this.currentWeight > 0 ? '公斤' : '',
+      icon: $r('app.media.icon_my_weight'),
+      badgeBackground: 'rgba(231,163,255,0.18)',
+      onTap: () => {
+        router.pushUrl({ url: 'pages/WeightTrendPage' })
+      }
+    }
+  }
+
+  private getBmrOverviewCard(): BodyOverviewCard {
+    return {
+      title: '基础代谢',
+      value: this.basalMetabolism > 0 ? Math.round(this.basalMetabolism).toString() : '--',
+      unit: this.basalMetabolism > 0 ? '千卡' : '',
+      icon: $r('app.media.icon_my_bmr'),
+      badgeBackground: 'rgba(255,140,71,0.18)',
+      onTap: () => {
+        router.pushUrl({ url: 'pages/BasalMetabolismPage' })
+      }
+    }
+  }
+
+  private getBmiOverviewCard(): BodyOverviewCard {
+    return {
+      title: 'BMI 指数',
+      value: this.bmi > 0 ? this.bmi.toFixed(1) : '--',
+      unit: this.bmi > 0 ? (this.bmiStatus || '') : '',
+      noteColor: this.resolveBmiColor(),
+      icon: $r('app.media.icon_my_bmi'),
+      badgeBackground: 'rgba(119,198,147,0.18)',
+      onTap: () => {
+        router.pushUrl({ url: 'pages/BodyMassIndexPage' })
+      }
+    }
+  }
+
+  @Builder private bodyDataCard(config: BodyOverviewCard) {
+    Row() {
+      Column() {
+        Text(config.title)
+          .fontSize(14)
+          .fontWeight(500)
+          .fontColor('#333333')
+
+        Text(config.value)
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#222222')
+          .margin({ top: 10 })
+
+        if (config.unit && config.unit.length > 0) {
+          Text(config.unit)
+            .fontSize(12)
+            .fontColor(config.noteColor ?? '#666666')
+            .margin({ top: 4 })
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      Column() {
+        Image(config.icon)
+          .width(26)
+          .height(26)
+          .objectFit(ImageFit.Contain)
+      }
+      .width(44)
+      .height(44)
+      .backgroundColor(config.badgeBackground)
+      .borderRadius(22)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .margin({ left: 10 })
+    }
+    .width('100%')
+    .padding({ top: 12, bottom: 12, left: 18, right: 18 })
+    .backgroundColor('#FFFFFF')
+    .borderRadius(16)
+    .shadow({ color: 'rgba(12,194,145,0.05)', radius: 6, offsetX: 0, offsetY: 4 })
+    .onClick(() => {
+      if (config.onTap) {
+        config.onTap()
+      }
+    })
+  }
+
   @Builder buildHealthFeatureSection() {
     Column() {
       Text('健康记录')
@@ -676,6 +1128,7 @@ struct MainTabs {
             Scroll(this.scroller){
               Column(){
                 Text("健康").fontColor('#000000').fontSize(20).fontWeight(500).width('95%').margin({bottom:10,top:10})
+                  .padding({top: EntryAbility.myWindowClass ? Math.max(0, EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM).topRect.height - 80) : 0})
                 MainTopView({formData:this.formData})
                 //头部的绿色区域 end
                 
@@ -718,206 +1171,179 @@ struct MainTabs {
                 // })
 
               }.width('100%')//第一页scroll的根节点
-            }.width('100%').height('100%').align(Alignment.Top).scrollBar(BarState.Off)
+              .backgroundColor(this.tabColor)
+            }.width('100%').height('100%').align(Alignment.Top).scrollBar(BarState.Off).backgroundColor(this.tabColor)
           }.tabBar(this.tabBuilder(0,'健康',$r('app.media.home_icon_f'),$r('app.media.home_icon_n'))) //Tab1 按钮
           // 第一个tab页面 end
           TabContent() {
             Column(){
-              Text("运动").fontColor('#000000').fontSize(20).fontWeight(500).width('95%').margin({bottom:10,top:10})
+              Text("运动").fontColor('#000000').fontSize(20).fontWeight(500).width('95%').margin({ bottom: 10, top: 10 })
+                .padding({ top: EntryAbility.myWindowClass ? Math.max(0, EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM).topRect.height - 80) : 0 })
               Tabs({ barPosition: BarPosition.Start, controller: this.subController }) {
                 TabContent() {// 第一个subTab1页面 start
-                  SubFragment({formData:this.subFragmentDataInside})
+                  Scroll(this.sportSubScrollers[0]) {
+                    Column() {
+                      SubFragment({formData:this.subFragmentDataInside})
+                    }
+                    .width('100%')
+                    .backgroundColor('#FFFFFF')
+                  }
+                  .width('100%')
+                  .align(Alignment.Top)
+                  .scrollBar(BarState.Off)
+                  .backgroundColor('#FFFFFF')
                 }.tabBar(this.subTabBuilder(0,'室内跑')).gesture(PanGesture(this.panOptionRight)
                     .onActionEnd(() => {
                       this.controller.changeIndex(0)
                     })
                 )
                 TabContent() {// 第二个subTab2页面 start
-                  SubFragment({formData:this.subFragmentDataOut})
-                }.tabBar(this.subTabBuilder(1,'室外跑'))
-                TabContent() {// 第三个subTab3页面 start
-                  SubFragment({formData:this.subFragmentDataWalk})
-                }.tabBar(this.subTabBuilder(2,'健走'))
-                TabContent() {// 第四个subTab4页面 start
-                  SubFragment({formData:this.subFragmentDataFoot})
-                }.tabBar(this.subTabBuilder(3,'徒步'))
-                TabContent() {// 第五个subTab5页面 start
-                  SubFragment({formData:this.subFragmentDataClimb})
-                }.tabBar(this.subTabBuilder(4,'登山'))
-                TabContent() {// 第六个subTab6页面 start - 数据统计
-                  Column() {
-                    Text('数据统计')
-                      .fontSize(18)
-                      .fontWeight(600)
-                      .margin({ top: 20, bottom: 10 })
-                      .alignSelf(ItemAlign.Start)
-                      .padding({ left: 20 })
-                    
-                    Row() {
-                      Column() {
-                        Image($r('app.media.setting_data_sport'))
-                          .width(50)
-                          .height(50)
-                          .margin({ bottom: 10 })
-                        Text('步数趋势')
-                          .fontSize(16)
-                          .fontWeight(500)
-                        Text('查看最近7天步数变化')
-                          .fontSize(12)
-                          .fontColor('#666')
-                          .margin({ top: 5 })
-                      }
-                      .layoutWeight(1)
-                      .padding(20)
-                      .backgroundColor('#f8f9fa')
-                      .borderRadius(15)
-                      .margin({ right: 10 })
-                      .onClick(() => {
-                        router.pushUrl({ url: 'pages/ChartPage' })
-                      })
-
-                      Column() {
-                        Image($r('app.media.setting_body_record'))
-                          .width(50)
-                          .height(50)
-                          .margin({ bottom: 10 })
-                        Text('运动分析')
-                          .fontSize(16)
-                          .fontWeight(500)
-                        Text('查看运动类型分布')
-                          .fontSize(12)
-                          .fontColor('#666')
-                          .margin({ top: 5 })
-                      }
-                      .layoutWeight(1)
-                      .padding(20)
-                      .backgroundColor('#f8f9fa')
-                      .borderRadius(15)
-                      .margin({ left: 10 })
-                      .onClick(() => {
-                        router.pushUrl({ url: 'pages/ChartPage' })
-                      })
+                  Scroll(this.sportSubScrollers[1]) {
+                    Column() {
+                      SubFragment({formData:this.subFragmentDataOut})
                     }
-                    .width('90%')
-                    .margin({ top: 20 })
-
-                    Row() {
-                      Column() {
-                        Image($r('app.media.setting_body_record'))
-                          .width(50)
-                          .height(50)
-                          .margin({ bottom: 10 })
-                        Text('身体数据')
-                          .fontSize(16)
-                          .fontWeight(500)
-                        Text('查看体重变化趋势')
-                          .fontSize(12)
-                          .fontColor('#666')
-                          .margin({ top: 5 })
-                      }
-                      .layoutWeight(1)
-                      .padding(20)
-                      .backgroundColor('#f8f9fa')
-                      .borderRadius(15)
-                      .margin({ right: 10 })
-                      .onClick(() => {
-                        router.pushUrl({ url: 'pages/ChartPage' })
-                      })
-
-                      Column() {
-                        Image($r('app.media.setting_data_sport'))
-                          .width(50)
-                          .height(50)
-                          .margin({ bottom: 10 })
-                        Text('周报总结')
-                          .fontSize(16)
-                          .fontWeight(500)
-                        Text('查看详细周报数据')
-                          .fontSize(12)
-                          .fontColor('#666')
-                          .margin({ top: 5 })
-                      }
-                      .layoutWeight(1)
-                      .padding(20)
-                      .backgroundColor('#f8f9fa')
-                      .borderRadius(15)
-                      .margin({ left: 10 })
-                      .onClick(() => {
-                        router.pushUrl({ url: 'pages/StepTrendPage' })
-                      })
-                    }
-                    .width('90%')
-                    .margin({ top: 20 })
+                    .width('100%')
+                    .backgroundColor('#FFFFFF')
                   }
                   .width('100%')
-                  .height('100%')
                   .align(Alignment.Top)
-                }.tabBar(this.subTabBuilder(5,'统计')).gesture(PanGesture(this.panOptionLeft)
-                    .onActionEnd(() => {
-                      this.controller.changeIndex(2)
-                    })
-                )
-              }.barHeight('6%').barWidth('93%').scrollable(true).width('100%').height('100%').vertical(false)
+                  .scrollBar(BarState.Off)
+                  .backgroundColor('#FFFFFF')
+                }.tabBar(this.subTabBuilder(1,'室外跑'))
+                TabContent() {// 第三个subTab3页面 start
+                  Scroll(this.sportSubScrollers[2]) {
+                    Column() {
+                      SubFragment({formData:this.subFragmentDataWalk})
+                    }
+                    .width('100%')
+                    .backgroundColor('#FFFFFF')
+                  }
+                  .width('100%')
+                  .align(Alignment.Top)
+                  .scrollBar(BarState.Off)
+                  .backgroundColor('#FFFFFF')
+                }.tabBar(this.subTabBuilder(2,'健走'))
+                TabContent() {// 第四个subTab4页面 start
+                  Scroll(this.sportSubScrollers[3]) {
+                    Column() {
+                      SubFragment({formData:this.subFragmentDataFoot})
+                    }
+                    .width('100%')
+                    .backgroundColor('#FFFFFF')
+                  }
+                  .width('100%')
+                  .align(Alignment.Top)
+                  .scrollBar(BarState.Off)
+                  .backgroundColor('#FFFFFF')
+                }.tabBar(this.subTabBuilder(3,'徒步'))
+                TabContent() {// 第五个subTab5页面 start
+                  Scroll(this.sportSubScrollers[4]) {
+                    Column() {
+                      SubFragment({formData:this.subFragmentDataClimb})
+                    }
+                    .width('100%')
+                    .backgroundColor('#FFFFFF')
+                  }
+                  .width('100%')
+                  .align(Alignment.Top)
+                  .scrollBar(BarState.Off)
+                  .backgroundColor('#FFFFFF')
+                }.tabBar(this.subTabBuilder(4,'登山'))
+              }
+              .barHeight('6%')
+              .barWidth('93%')
+              .scrollable(true)
+              .width('100%')
+              .layoutWeight(1)
+              .vertical(false)
               .onChange((index: number) => {
                 this.currentSubIndex = index
               }).animationDuration(100)
-            }.width('100%').height('100%').align(Alignment.Top)//第一页scroll的根节点
+              .backgroundColor('#FFFFFF')
+            }.width('100%').height('100%').backgroundColor('#FFFFFF')//第一页scroll的根节点
           }.tabBar(this.tabBuilder(1,'运动',$r('app.media.tab_sport_f'),$r('app.media.tab_sport_n'))) //Tab2 按钮
           TabContent() {
             Scroll(this.scroller){
               Column(){
-                Image($r('app.media.setting_bg_icon')).width(25).height(25).margin({top:5}).alignSelf(ItemAlign.End).onClick(() => {
-                  //跳转设置
-                  router.pushUrl({ url: 'pages/SettingPage' })
-                })
                 Row(){
-                  Image(this.userImg).alt($r('app.media.user_image')).width(60).height(60).borderRadius(15)
-                  Text(){
-                    Span(this.userName).fontSize(18).fontColor('#000000').fontWeight(600)
-                    Span('\n')
-                    Span(this.userCode).fontSize(13).fontColor('#ff727272')
-                  }.textAlign(TextAlign.Start).textAlign(TextAlign.Start).margin({left:10}).layoutWeight(1)
-                }.width('94%').margin({top:15})
-
-                Row() {
-                  UserDataView({formData:this.userData1}).onClick(() => {
-                    router.pushUrl({ url: 'pages/StepWeekPage' })
+                  Row(){
+                    Image(this.userImg).alt($r('app.media.user_image')).width(60).height(60).borderRadius(15)
+                    Text(){
+                      Span(this.userName).fontSize(18).fontColor('#000000').fontWeight(600)
+                      Span('\n')
+                      Span(this.userCode).fontSize(13).fontColor('#ff727272')
+                    }.textAlign(TextAlign.Start).textAlign(TextAlign.Start).margin({left:10})
+                  }
+                  .layoutWeight(1)
+                  .onClick(() => {
+                    console.info('[MainTabs] 点击登录区域, userName:', this.userName);
+                    this.handleLoginTap();
                   })
-                  UserDataView({formData:this.userData2})
-                }.margin({top:15})
+                  
+                  Row(){
+                    Text('个人信息')
+                      .fontSize(14)
+                      .fontColor('#333333')
+                    Image($r('app.media.right_point'))
+                      .width(16)
+                      .height(16)
+                      .margin({ left: 4 })
+                      .fillColor('#999999')
+                  }
+                  .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                  .onClick(() => {
+                    router.pushUrl({ url: 'pages/UserProfilePage' }).catch((err: Error) => {
+                      console.error('[MainTabs] 跳转个人信息页面失败:', err.message)
+                    })
+                  })
+                }
+                .width('94%')
+                .height(80)
+                .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+                .margin({top:10})
+                .backgroundColor(this.userName === '未登录用户' ? '#F8F8F8' : 'transparent')
+                .borderRadius(12)
+                .justifyContent(FlexAlign.SpaceBetween)
+                .alignItems(VerticalAlign.Center)
+
+                // 身体数据卡片区域
+                this.buildBodyDataCards()
 
                 Column(){
-                  SettingItemView({formData:{type:1,title:'运动记录',icon:$r('app.media.setting_data_sport')}})
-                  SettingItemView({formData:{type:2,title:'身体数据',icon:$r('app.media.setting_body_record')}})
                   SettingItemView({formData:{type:8,title:'数据统计',icon:$r('app.media.setting_data_sport')}}).onClick(() => {
                     router.pushUrl({ url: 'pages/ChartPage' })
                   })
                 }.width('96%').backgroundColor('#FFFFFF').borderRadius(15).margin({top:20})
 
                 Column(){
-                  SettingItemView({formData:{type:3,title:'分享',icon:$r('app.media.setting_share_app')}})
+                  SettingItemView({formData:{type:9,title:'设置',icon:$r('app.media.setting_icon_n')}})
                   SettingItemView({formData:{type:4,title:'个人信息手机清单',icon:$r('app.media.userinfo_sj')}})
                   SettingItemView({formData:{type:5,title:'个人信息共享清单',icon:$r('app.media.userinfo_gx')}})
-                  SettingItemView({formData:{type:6,title:'给软件评分',icon:$r('app.media.setting_rate_us')}})
-                  SettingItemView({formData:{type:7,title:'帮助与反馈',icon:$r('app.media.setting_advice_suggest')}})
                 }.width('96%').backgroundColor('#FFFFFF').borderRadius(15).margin({top:20})
 
-              }.width('100%').padding({left:'1%',right:'1%'})
-            }.width('100%').height('100%').align(Alignment.Top).scrollBar(BarState.Off)
+              }.width('100%').padding({
+                left:'1%',
+                right:'1%',
+                top: EntryAbility.myWindowClass ? Math.max(0, EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM).topRect.height - 80) : 0
+              })
+              .backgroundColor(this.tabColor)
+            }.width('100%').height('100%').align(Alignment.Top).scrollBar(BarState.Off).backgroundColor(this.tabColor)
           }.tabBar(this.tabBuilder(2,'我的',$r('app.media.setting_icon_f'),$r('app.media.setting_icon_n'))) //Tab3 按钮
         }
         .vertical(false).onTabBarClick((index: number) => {
           this.controller.changeIndex(index)
         })
-        .barHeight('7%').barWidth('100%').scrollable(true).barBackgroundColor('#FFFFFFFF')
+        .barHeight('7%').barWidth('100%').scrollable(true).barBackgroundColor('#FFFFFFFF').backgroundColor('#FFFFFFFF')
         .onChange((index: number) => {
           this.currentIndex = index
         })
         .width('100%').height('100%')
-        .backgroundColor(this.tabColor) // tab的整体控件
+        .backgroundColor('#FFFFFFFF') // tab 的整体背景（含底部安全区）设为白色
+        .padding({ bottom: EntryAbility.myWindowClass ? (EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM).bottomRect.height + 20) : 20 })
       }
       .width('100%')
       .height('100%')
       .alignContent(Alignment.Bottom)
+      .backgroundColor(this.tabColor)
   }
 }

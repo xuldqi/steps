@@ -1,6 +1,17 @@
+import { window } from '@kit.ArkUI';
+import EntryAbility from '../entryability/EntryAbility';
+
 @Entry
 @Component
 struct AdvicePage {
+  private getSafeTopPadding(): number {
+    if (!EntryAbility.myWindowClass) {
+      return 0
+    }
+    const avoidArea = EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
+    return Math.max(0, avoidArea.topRect.height)
+  }
+
   build() {
     Column() {
       Column() {
@@ -10,7 +21,12 @@ struct AdvicePage {
           .alignSelf(ItemAlign.Center)
           .textAlign(TextAlign.Center)
           .fontColor('#0cc291')
-      }.width('100%').height('7%').align(Alignment.Center)
+      }
+      .width('100%')
+      .height(56)
+      .padding({ top: this.getSafeTopPadding() })
+      .alignItems(HorizontalAlign.Center)
+      .justifyContent(FlexAlign.Center)
 
       Column() {
       }.width('100%').height(1).backgroundColor('#f0f0f0')
@@ -31,8 +47,10 @@ struct AdvicePage {
           .fontColor('#0cc291')
       }
       .width('100%')
-      .height('91%')
+      .layoutWeight(1)
       .align(Alignment.Center)
     }
+    .width('100%')
+    .height('100%')
   }
 }

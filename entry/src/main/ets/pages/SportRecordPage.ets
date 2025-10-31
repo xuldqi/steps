@@ -1,4 +1,4 @@
-import { router } from '@kit.ArkUI';
+import { router, window } from '@kit.ArkUI';
 import { SportModel } from '../appdata/Model';
 import AppDataManager, { DataCallback } from '../tools/AppDataManager';
 import { DateUtils } from '../tools/DateUtils';
@@ -10,11 +10,30 @@ import { SubFragmentData } from '../view/SubFragment';
 import { McBarChart, Options } from '@mcui/mccharts';
 import { SportRecordDialog } from '../view/SportRecordDialog';
 import { CommonTitleView } from '../view/CommonTitleView';
+import EntryAbility from '../entryability/EntryAbility';
 
 interface SportTypeStat {
   name: string
-  count: number
+  value: number
+  display: string
   percentage: number
+}
+
+interface SportTypeAggregate {
+  count: number
+  minutes: number
+  calories: number
+}
+
+interface TimeRangeWindow {
+  start: number
+  end: number
+}
+
+interface ChartSeriesData {
+  labels: Array<string>
+  values: Array<number>
+  title: string
 }
 
 @Entry
@@ -30,14 +49,18 @@ struct SportRecordPage {
   @State totalTime: number = 0
   @State totalActivities: number = 0
   @State totalCalories: number = 0
-  @State selectedMetric: string = '运动次数' // 运动次数、运动时长
+  @State selectedMetric: string = '运动时长' // 运动次数、运动时长、消耗热量（默认运动时长）
   @State timeRange: string = '周' // 周、月、年
   private dates: Array<string> = new Array<string>()
+  private readonly metricOptions: Array<string> = ['运动时长', '运动次数', '消耗热量']
+  @State showMetricSelector: boolean = false
+  @State showSportTypeSelector: boolean = false
   
   @State seriesRadiusOption: Options = new Options({
-    title: { show: true, text: '最近七天的运动统计', right: 20, top: 30 },
+    legend: { show: false },
+    title: { show: true, text: '最近七天的运动时长', right: 20, top: 30 },
     xAxis: { data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日']},
-    series: [{ name: '运动次数', barStyle: { 
+    series: [{ name: '运动时长', barStyle: { 
           width: 10,
           color:'#0cc291',
           borderRadius: [4, 4] },
@@ -46,19 +69,32 @@ struct SportRecordPage {
 
   // 运动类型占比数据
   @State sportTypeStats: Array<SportTypeStat> = []
+  private initialized: boolean = false
 
 
   onPageShow(): void {
-    let params = router.getParams() as SubFragmentData;
-    if (params && params.type !== undefined) {
-      this.currentType = params.type
-      Log.i('SportRecordPage Received: ' + this.currentType);
-    } else {
-      // 如果没有参数，使用默认值
-      this.currentType = 0 // 显示所有记录
-      Log.i('SportRecordPage Using default type: ' + this.currentType);
+    if (!this.initialized) {
+      let params = router.getParams() as SubFragmentData;
+      if (params && params.type !== undefined) {
+        this.currentType = params.type
+        Log.i('SportRecordPage Received: ' + this.currentType);
+      } else {
+        this.currentType = 0
+        Log.i('SportRecordPage Using default type: ' + this.currentType);
+      }
+      this.selectedMetric = '运动时长'
+      this.timeRange = '周'
+      this.curOffset = 0
+      this.initialized = true
+      this.showWeekSportRecord(this.curOffset)
+      return
     }
-    this.showWeekSportRecord(this.curOffset)
+
+    const status = AppDataManager.getSportDataStatus()
+    if (status.isChange) {
+      this.showWeekSportRecord(this.curOffset)
+      AppDataManager.resetSportDataStatus()
+    }
   }
 
   exitApp() {
@@ -74,92 +110,130 @@ struct SportRecordPage {
       }else{
         this.data.length = 0
         this.data = result
-        this.calculateSportStats()
+        this.refreshVisualData()
       }
     }
   }
 
-  private calculateSportStats() {
-    this.totalDistance = 0
-    this.totalTime = 0
-    this.totalActivities = this.data.length
-    this.totalCalories = 0
+  private refreshVisualData(): void {
+    this.recalculateRangeStatistics()
+    this.updateChartData()
+  }
 
-    // 计算运动类型统计
-    const typeCount: Map<number, number> = new Map()
-    
-    for (let item of this.data) {
-      this.totalDistance = this.totalDistance + parseFloat(Utils.getDistanceByStep(item.steps))
-      this.totalTime = this.totalTime + item.use_time
-      // 计算热量消耗（根据步数估算）
-      const calories = Math.round(parseFloat(Utils.getDistanceByStep(item.steps)) * 50)
-      this.totalCalories = this.totalCalories + calories
-      
-      // 统计运动类型
-      const count = typeCount.get(item.type) || 0
-      typeCount.set(item.type, count + 1)
+  private recalculateRangeStatistics(): void {
+    const range = this.getCurrentRangeWindow()
+    const recordsInRange: Array<SportModel> = this.data.filter((record: SportModel) => record.start_time >= range.start && record.start_time <= range.end)
+
+    this.totalActivities = recordsInRange.length
+    let totalMinutes = 0
+    let totalCalories = 0
+    let totalDistance = 0
+
+    const typeAggregates: Map<number, SportTypeAggregate> = new Map()
+
+    for (const record of recordsInRange) {
+      const minutes = Math.max(0, Math.floor(record.use_time / 60000))
+      const calories = this.getCaloriesForRecord(record)
+      const distance = Number.parseFloat(Utils.getDistanceByStep(record.steps))
+
+      totalMinutes = totalMinutes + minutes
+      totalCalories = totalCalories + calories
+      totalDistance = totalDistance + (Number.isNaN(distance) ? 0 : distance)
+
+      let aggregate = typeAggregates.get(record.type)
+      if (!aggregate) {
+        aggregate = { count: 0, minutes: 0, calories: 0 }
+        typeAggregates.set(record.type, aggregate)
+      }
+      aggregate.count = aggregate.count + 1
+      aggregate.minutes = aggregate.minutes + minutes
+      aggregate.calories = aggregate.calories + calories
     }
 
-    // 计算运动类型占比
-    this.sportTypeStats = []
-    typeCount.forEach((count: number, type: number) => {
-      const percentage = this.totalActivities > 0 ? (count / this.totalActivities * 100) : 0
-      this.sportTypeStats.push({
+    this.totalTime = totalMinutes
+    this.totalCalories = totalCalories
+    this.totalDistance = totalDistance
+
+    const totalMetric = this.selectedMetric === '运动次数'
+      ? this.totalActivities
+      : this.selectedMetric === '运动时长'
+        ? totalMinutes
+        : totalCalories
+
+    const stats: Array<SportTypeStat> = []
+    typeAggregates.forEach((aggregate: SportTypeAggregate, type: number) => {
+      const metricValue = this.getMetricValueFromAggregate(aggregate, this.selectedMetric)
+      const percentage = totalMetric > 0 ? Math.round(metricValue / totalMetric * 1000) / 10 : 0
+      stats.push({
         name: Utils.getSportRecordName(type),
-        count: count,
-        percentage: Math.round(percentage * 10) / 10
+        value: metricValue,
+        display: this.formatMetricDisplay(metricValue, this.selectedMetric),
+        percentage: percentage
       })
     })
-    
-    // 按次数排序
-    this.sportTypeStats.sort((a, b) => b.count - a.count)
-    
-    // 计算每日数据
-    let mm_datas = new Array<number>()
-    let mm_dates = new Array<string>()
-    out: for (let i = 0; i < this.dates.length; i++) {
-      mm_dates.push(DateUtils.getWeek(this.dates[i]))
-      Log.i('sportCallback mm_dates:' + mm_dates[i])
-      let dayValue = 0
-      for (let item of this.data) {
-        const itemDate = new Date(item.start_time).toISOString().split('T')[0]
-        if (this.dates[i] === itemDate) {
-          if (this.selectedMetric === '运动次数') {
-            dayValue = dayValue + 1
-          } else if (this.selectedMetric === '运动时长') {
-            dayValue = dayValue + Math.floor(item.use_time / 60) // 转换为分钟
-          }
-        }
+
+    stats.sort((a, b) => b.value - a.value)
+    this.sportTypeStats = stats
+  }
+
+  private getCurrentRangeWindow(): TimeRangeWindow {
+    if (this.timeRange === '周') {
+      const startDate = this.getDateByOffset(6 + 7 * this.curOffset)
+      const endDate = this.getDateByOffset(7 * this.curOffset)
+      return {
+        start: this.getStartOfDay(startDate),
+        end: this.getEndOfDay(endDate)
       }
-      mm_datas.push(dayValue)
+    } else if (this.timeRange === '月') {
+      const base = this.getMonthBaseDate(this.curOffset)
+      const monthEnd = new Date(base.getFullYear(), base.getMonth() + 1, 0)
+      return {
+        start: this.getStartOfDay(base),
+        end: this.getEndOfDay(monthEnd)
+      }
     }
-    
-    this.seriesRadiusOption.setVal({
-      xAxis: { data: mm_dates },
-      series: [{ 
-        name: this.selectedMetric, 
-        barStyle: { 
-          width: 10,
-          color:'#0cc291',
-          borderRadius: [4, 4] 
-        }, 
-        data: mm_datas 
-      }]
-    })
+    const year = new Date().getFullYear() - this.curOffset
+    const startDate = new Date(year, 0, 1)
+    const endDate = new Date(year, 11, 31)
+    return {
+      start: this.getStartOfDay(startDate),
+      end: this.getEndOfDay(endDate)
+    }
+  }
+
+  private getCaloriesForRecord(record: SportModel): number {
+    let calories = Number.parseFloat(record.cal ?? '0')
+    if (Number.isNaN(calories) || calories <= 0) {
+      calories = Math.round(parseFloat(Utils.getDistanceByStep(record.steps)) * 50)
+    }
+    return Number.isNaN(calories) ? 0 : calories
+  }
+
+  private getMetricValueFromAggregate(aggregate: SportTypeAggregate, metric: string): number {
+    if (metric === '运动次数') {
+      return aggregate.count
+    } else if (metric === '运动时长') {
+      return aggregate.minutes
+    } else if (metric === '消耗热量') {
+      return aggregate.calories
+    }
+    return 0
+  }
+
+  private formatMetricDisplay(value: number, metric: string): string {
+    if (metric === '运动次数') {
+      return `${Math.round(value)}次`
+    } else if (metric === '运动时长') {
+      return `${Math.round(value)}分钟`
+    } else if (metric === '消耗热量') {
+      return `${Math.round(value)}千卡`
+    }
+    return `${Math.round(value)}`
   }
 
   private showWeekSportRecord(i: number) {
-    this.top_week = DateUtils.getYMDCH(6 + 7 * i) + ' - ' + DateUtils.getYMDCH(7 * i)
-    this.dates.length = 0
-    this.dates.push(DateUtils.getYMD_(6 + 7 * i))
-    this.dates.push(DateUtils.getYMD_(5 + 7 * i))
-    this.dates.push(DateUtils.getYMD_(4 + 7 * i))
-    this.dates.push(DateUtils.getYMD_(3 + 7 * i))
-    this.dates.push(DateUtils.getYMD_(2 + 7 * i))
-    this.dates.push(DateUtils.getYMD_(1 + 7 * i))
-    this.dates.push(DateUtils.getYMD_(7 * i))
-    
-    // 重新加载数据
+    this.curOffset = i
+    this.refreshRangeWindow()
     AppDataManager.findSportByType(this.currentType, this.sportCallback, false)
   }
 
@@ -168,213 +242,442 @@ struct SportRecordPage {
     router.pushUrl({
       url: 'pages/AddSportPage',
       params: {
-        onConfirm: (sportType: number, duration: number, distance: number, calories: number, startTime: number) => {
-          // 计算步数（根据距离估算）
-          const steps = Math.round(distance * 1000 / 0.6)
-          
-          // 插入运动记录
-          AppDataManager.insertSportRecord(
-            startTime,
-            duration,
-            steps,
-            sportType,
-            0,
-            calories.toString()
-          )
-          
-          // 延迟刷新数据，确保数据库操作完成
-          setTimeout(() => {
-            this.showWeekSportRecord(this.curOffset)
-            Utils.showToast('运动记录添加成功')
-          }, 200)
-        }
+        sportType: this.currentType === 0 ? 1 : this.currentType
       }
     })
   }
 
+  private setTimeRange(range: string) {
+    if (this.timeRange === range) {
+      console.info('[SportRecordPage] setTimeRange: 已经是', range, '范围，无需切换')
+      this.showMetricSelector = false
+      return
+    }
+    console.info('[SportRecordPage] setTimeRange: 从', this.timeRange, '切换到', range)
+    this.timeRange = range
+    this.curOffset = 0 // 重置为当前周期
+    this.showMetricSelector = false
+    this.refreshRangeWindow()
+    this.refreshVisualData()
+  }
+
+  private changeRangeOffset(delta: number) {
+    this.showMetricSelector = false
+    const candidate = this.curOffset + delta
+    if (candidate < 0) {
+      console.info('[SportRecordPage] changeRangeOffset: 已达到最早时间，无法继续向前')
+      return
+    }
+    console.info('[SportRecordPage] changeRangeOffset: 从', this.curOffset, this.timeRange, '切换到', candidate, this.timeRange)
+    this.curOffset = candidate
+    this.refreshRangeWindow()
+    this.refreshVisualData()
+  }
+
+  private refreshRangeWindow(): void {
+    if (this.timeRange === '周') {
+      const start = this.getDateByOffset(6 + 7 * this.curOffset)
+      const end = this.getDateByOffset(7 * this.curOffset)
+      this.top_week = `${this.formatDateCN(start)} - ${this.formatDateCN(end)}`
+    } else if (this.timeRange === '月') {
+      const base = this.getMonthBaseDate(this.curOffset)
+      this.top_week = `${base.getFullYear()}年${base.getMonth() + 1}月`
+    } else {
+      const year = new Date().getFullYear() - this.curOffset
+      this.top_week = `${year}年`
+    }
+  }
+
+  private updateChartData(): void {
+    const chartData: ChartSeriesData = this.computeChartSeries()
+    this.seriesRadiusOption.setVal({
+      legend: { show: false },
+      title: { show: true, text: chartData.title, right: 20, top: 30 },
+      xAxis: { data: chartData.labels },
+      series: [{
+        name: this.selectedMetric,
+        barStyle: {
+          width: 10,
+          color: '#0cc291',
+          borderRadius: [4, 4]
+        },
+        data: chartData.values
+      }]
+    })
+  }
+
+  private computeChartSeries(): ChartSeriesData {
+    const labels: Array<string> = []
+    const values: Array<number> = []
+    let title = `最近七天的${this.selectedMetric}`
+
+    if (this.timeRange === '周') {
+      for (let day = 6; day >= 0; day--) {
+        const offset = day + 7 * this.curOffset
+        const date = this.getDateByOffset(offset)
+        const startMs = this.getStartOfDay(date)
+        const endMs = this.getEndOfDay(date)
+        const labelKey = this.formatDateKey(date)
+        labels.push(DateUtils.getWeek(labelKey))
+        values.push(this.normalizeMetricValue(this.calculateMetricInRange(startMs, endMs)))
+      }
+      title = `最近七天的${this.selectedMetric}`
+    } else if (this.timeRange === '月') {
+      const base = this.getMonthBaseDate(this.curOffset)
+      const year = base.getFullYear()
+      const month = base.getMonth()
+      const daysInMonth = new Date(year, month + 1, 0).getDate()
+      for (let day = 1; day <= daysInMonth; day++) {
+        const current = new Date(year, month, day)
+        const startMs = this.getStartOfDay(current)
+        const endMs = this.getEndOfDay(current)
+        labels.push(`${day}日`)
+        values.push(this.normalizeMetricValue(this.calculateMetricInRange(startMs, endMs)))
+      }
+      title = `${year}年${month + 1}月的${this.selectedMetric}`
+    } else {
+      const year = new Date().getFullYear() - this.curOffset
+      for (let month = 0; month < 12; month++) {
+        const monthStart = new Date(year, month, 1)
+        const monthEnd = new Date(year, month + 1, 0)
+        const startMs = this.getStartOfDay(monthStart)
+        const endMs = this.getEndOfDay(monthEnd)
+        labels.push(`${month + 1}月`)
+        values.push(this.normalizeMetricValue(this.calculateMetricInRange(startMs, endMs)))
+      }
+      title = `${year}年的${this.selectedMetric}`
+    }
+
+    const result: ChartSeriesData = {
+      labels: labels,
+      values: values,
+      title: title
+    }
+    return result
+  }
+
+  private getRangeSummaryLabel(): string {
+    if (this.timeRange === '周') {
+      const end = this.getDateByOffset(7 * this.curOffset)
+      return this.formatDateCN(end)
+    } else if (this.timeRange === '月') {
+      const base = this.getMonthBaseDate(this.curOffset)
+      return `${base.getFullYear()}年${base.getMonth() + 1}月`
+    } else {
+      const year = new Date().getFullYear() - this.curOffset
+      return `${year}年`
+    }
+  }
+
+  private calculateMetricInRange(startMs: number, endMs: number): number {
+    let total = 0
+    for (const item of this.data) {
+      const recordTime = item.start_time
+      if (recordTime >= startMs && recordTime <= endMs) {
+        if (this.selectedMetric === '运动次数') {
+          total += 1
+        } else if (this.selectedMetric === '运动时长') {
+          total += Math.max(0, Math.floor(item.use_time / 60000))
+        } else if (this.selectedMetric === '消耗热量') {
+          total += this.getCaloriesForRecord(item)
+        }
+      }
+    }
+    return total
+  }
+
+  private normalizeMetricValue(value: number): number {
+    if (this.selectedMetric === '运动次数') {
+      return Math.max(0, Math.round(value))
+    } else if (this.selectedMetric === '运动时长') {
+      return Math.max(0, Math.round(value))
+    } else if (this.selectedMetric === '消耗热量') {
+      return Math.max(0, Math.round(value))
+    }
+    return value
+  }
+
+  private getDateByOffset(offsetDays: number): Date {
+    const base = new Date()
+    base.setHours(0, 0, 0, 0)
+    base.setDate(base.getDate() - offsetDays)
+    return base
+  }
+
+  private getMonthBaseDate(offsetMonths: number): Date {
+    const base = new Date()
+    base.setHours(0, 0, 0, 0)
+    base.setDate(1)
+    base.setMonth(base.getMonth() - offsetMonths)
+    return base
+  }
+
+  private formatDateCN(date: Date): string {
+    return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
+  }
+
+  private formatDateKey(date: Date): string {
+    return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`
+  }
+
+  private getStartOfDay(date: Date): number {
+    const copy = new Date(date)
+    copy.setHours(0, 0, 0, 0)
+    return copy.getTime()
+  }
+
+  private getEndOfDay(date: Date): number {
+    const copy = new Date(date)
+    copy.setHours(23, 59, 59, 999)
+    return copy.getTime()
+  }
+
   build() {
-    Column() {
-      // 顶部标题栏
-      Row() {
-        Image($r('app.media.back_btn_dark'))
-          .width(20)
-          .height(20)
-          .onClick(() => {
-            router.back()
-          })
-        
-        // 标题区域 - 使用绝对定位实现居中
-        Stack() {
-          Text(Utils.getSportRecordTitle(this.currentType))
-            .fontSize(18)
-            .fontWeight(500)
-            .fontColor('#333333')
-            .textAlign(TextAlign.Center)
+    Stack() {
+      Column() {
+        // 顶部标题栏
+        Row() {
+          Image($r('app.media.back_btn_dark'))
+            .width(20)
+            .height(20)
+            .onClick(() => {
+              router.back()
+            })
           
-          // 右侧按钮组
           Row() {
-            Text('▼')
+            Text(Utils.getSportRecordTitle(this.currentType))
+              .fontSize(18)
+              .fontWeight(500)
+              .fontColor('#333333')
+              .textAlign(TextAlign.Center)
+              .margin({ right: 4 })
+            Text(this.showSportTypeSelector ? '▲' : '▼')
               .fontSize(12)
               .fontColor('#666666')
-              .margin({ right: 8 })
-              .onClick(() => {
-                this.openSportTypeDialog()
-              })
-            
-            Text('运动日历>')
-              .fontSize(14)
-              .fontColor('#0cc291')
-              .onClick(() => {
-                router.pushUrl({
-                  url: 'pages/SportCalendarPage'
-                })
-              })
           }
-          .position({ x: 0, y: 0 })
-          .alignSelf(ItemAlign.End)
-        }
-        .layoutWeight(1)
-        .height(40)
-      }
-      .width('100%')
-      .padding({ top: 16, bottom: 16, left: 20, right: 20 })
-      .backgroundColor('#FFFFFF')
-      .border({ width: { bottom: 1 }, color: '#F0F0F0' })
-      
-      Scroll() {
-        Column() {
-          // 趋势查看区域
-          this.buildTrendSection()
-          
-          // 信息概览
-          this.buildInfoOverview()
-          
-          // 运动次数占比（仅全部运动时显示）
-          if (this.currentType === 0) {
-            this.buildSportTypeStats()
-          }
-          
-          // 添加运动按钮
-          this.buildAddSportButton()
+          .alignItems(VerticalAlign.Center)
+          .justifyContent(FlexAlign.Center)
+          .layoutWeight(1)
+          .height(40)
+          .onClick(() => {
+            this.toggleSportTypeSelector()
+          })
         }
         .width('100%')
-        .padding({ left: 20, right: 20 })
+        .padding({ top: this.getSafeTopPadding() + 16, bottom: 16, left: 20, right: 20 })
+        .backgroundColor('#F5F5F5')
+        .border({ width: { bottom: 1 }, color: '#E5E5E5' })
+        
+        Scroll() {
+          Column() {
+            // 趋势查看区域
+            this.buildTrendSection()
+            
+            // 信息概览
+            this.buildInfoOverview()
+            
+            // 运动次数占比（仅全部运动时显示）
+            if (this.currentType === 0) {
+              this.buildSportTypeStats()
+            }
+            
+            // 添加运动按钮
+            this.buildAddSportButton()
+          }
+          .width('100%')
+          .padding({ left: 20, right: 20 })
+        }
+        .layoutWeight(1)
+        .backgroundColor('#F5F5F5')
       }
-      .layoutWeight(1)
+      .width('100%')
+      .height('100%')
       .backgroundColor('#F5F5F5')
+
+      if (this.showSportTypeSelector) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#33000000')
+          .onClick(() => {
+            this.showSportTypeSelector = false
+          })
+      }
+
+      if (this.showSportTypeSelector) {
+        Column() {
+          SportTypeDialog({
+            currentType: this.currentType,
+            onSelect: (type: number) => {
+              this.onSportTypeSelected(type)
+            }
+          })
+        }
+        .width('88%')
+        .align(Alignment.TopStart)
+        .margin({ top: this.getSportTypeSelectorTopMargin(), left: 20, right: 20 })
+      }
     }
     .width('100%')
     .height('100%')
     .backgroundColor('#F5F5F5')
   }
 
+  onBackPress(): boolean {
+    if (this.showSportTypeSelector) {
+      this.showSportTypeSelector = false
+      return true
+    }
+    return false
+  }
+
+  private getSafeTopPadding(): number {
+    if (!EntryAbility.myWindowClass) {
+      return 0
+    }
+    const avoidArea = EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
+    return Math.max(0, avoidArea.topRect.height - 80)
+  }
+
+  private getSportTypeSelectorTopMargin(): number {
+    return this.getSafeTopPadding() + 72
+  }
+
   @Builder
   buildTrendSection() {
-    Column() {
-      // 趋势查看标题和指标选择
-      Row() {
-        Text('趋势查看')
-          .fontSize(16)
-          .fontWeight(500)
-          .fontColor('#333333')
-          .layoutWeight(1)
-        
+    Stack() {
+      Column() {
         Row() {
-          Text(this.selectedMetric)
-            .fontSize(14)
-            .fontColor('#666666')
-          Text('▼')
-            .fontSize(12)
-            .fontColor('#666666')
-            .margin({ left: 4 })
+          Text('趋势查看')
+            .fontSize(16)
+            .fontWeight(500)
+            .fontColor('#333333')
+            .layoutWeight(1)
+
+          Row() {
+            Text(this.selectedMetric)
+              .fontSize(14)
+              .fontColor('#333333')
+            Text('▼')
+              .fontSize(12)
+              .fontColor('#333333')
+              .margin({ left: 4 })
+          }
+          .alignItems(VerticalAlign.Center)
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .backgroundColor('#F4F4F4')
+          .borderRadius(16)
+          .onClick(() => {
+            this.toggleMetricSelector()
+          })
         }
-        .onClick(() => {
-          this.toggleMetric()
-        })
-      }
-      .width('100%')
-      .margin({ bottom: 12 })
-      
-      // 时间范围选择
-      Row() {
-        ForEach(['周', '月', '年'], (item: string) => {
-          Text(item)
-            .fontSize(14)
-            .fontColor(this.timeRange === item ? '#0cc291' : '#666666')
-            .fontWeight(this.timeRange === item ? 500 : 400)
-            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-            .backgroundColor(this.timeRange === item ? '#E8F5E8' : 'transparent')
-            .borderRadius(4)
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        Row() {
+          ForEach(['周', '月', '年'], (item: string) => {
+            Text(item)
+              .fontSize(14)
+              .fontColor(this.timeRange === item ? '#FFFFFF' : '#333333')
+              .fontWeight(this.timeRange === item ? FontWeight.Medium : FontWeight.Normal)
+              .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+              .backgroundColor(this.timeRange === item ? '#0cc291' : '#F0F0F0')
+              .borderRadius(16)
+              .margin({ left: 4, right: 4 })
+              .opacity(this.timeRange === item ? 1 : 0.8)
+              .onClick(() => {
+                console.info('[SportRecordPage] 点击时间范围:', item)
+                this.setTimeRange(item)
+              })
+          }, (item: string, index: number) => `range-${item}-${index}`)
+        }
+        .justifyContent(FlexAlign.Center)
+        .width('100%')
+        .margin({ top: 12, bottom: 12 })
+
+        Row() {
+          Image($r('app.media.back_btn_dark'))
+            .width(20)
+            .height(20)
             .onClick(() => {
-              this.timeRange = item
+              this.changeRangeOffset(1)
             })
-        })
-      }
-      .width('100%')
-      .margin({ bottom: 12 })
-      
-      // 日期范围导航
-      Row() {
-        Image($r('app.media.back_btn_dark'))
-          .width(20)
-          .height(20)
-          .onClick(() => {
-            this.curOffset = this.curOffset + 1
-            this.showWeekSportRecord(this.curOffset)
+
+          Text(this.top_week)
+            .fontSize(14)
+            .fontColor('#333333')
+            .layoutWeight(1)
+            .textAlign(TextAlign.Center)
+
+          Image($r('app.media.right_btn'))
+            .width(20)
+            .height(20)
+            .onClick(() => {
+              this.changeRangeOffset(-1)
+            })
+        }
+        .width('100%')
+        .margin({ bottom: 12 })
+
+        Row() {
+          Text(this.getCurrentValue())
+            .fontSize(24)
+            .fontWeight(600)
+            .fontColor('#333333')
+
+          Text(this.getCurrentUnit())
+            .fontSize(16)
+            .fontColor('#666666')
+            .margin({ left: 8 })
+
+          Text(this.getRangeSummaryLabel())
+            .fontSize(14)
+            .fontColor('#666666')
+            .layoutWeight(1)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+        .margin({ bottom: 16 })
+
+        Row() {
+          McBarChart({
+            options: this.seriesRadiusOption
           })
-        
-        Text(this.top_week)
-          .fontSize(14)
-          .fontColor('#333333')
-          .layoutWeight(1)
-          .textAlign(TextAlign.Center)
-        
-        Image($r('app.media.right_btn'))
-          .width(20)
-          .height(20)
-          .onClick(() => {
-            this.curOffset = this.curOffset - 1
-            this.showWeekSportRecord(this.curOffset)
-          })
+        }
+        .height(200)
+        .width('100%')
       }
       .width('100%')
+      .padding(16)
+      .backgroundColor('#FFFFFF')
+      .borderRadius(12)
       .margin({ bottom: 12 })
-      
-      // 当前值显示
-      Row() {
-        Text(this.getCurrentValue())
-          .fontSize(24)
-          .fontWeight(600)
-          .fontColor('#333333')
-        
-        Text(this.getCurrentUnit())
-          .fontSize(16)
-          .fontColor('#666666')
-          .margin({ left: 8 })
-        
-        Text('11月15日')
-          .fontSize(14)
-          .fontColor('#666666')
-          .layoutWeight(1)
-          .textAlign(TextAlign.End)
+
+      if (this.showMetricSelector) {
+        Column() {
+          ForEach(this.metricOptions, (option: string, index: number) => {
+            Text(option)
+              .fontSize(14)
+              .fontColor(this.selectedMetric === option ? '#333333' : '#999999')
+              .fontWeight(this.selectedMetric === option ? 600 : 400)
+              .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+              .width('100%')
+              .backgroundColor(this.selectedMetric === option ? '#F3F7F5' : '#FFFFFF')
+              .textAlign(TextAlign.Start)
+              .onClick(() => {
+                this.onMetricSelect(option)
+              })
+          }, (option: string, index: number) => `metric-${index}`)
+        }
+        .width(140)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(12)
+        .border({ width: 1, color: '#EAEAEA' })
+        .align(Alignment.TopEnd)
+        .margin({ top: 62, right: 32 })
       }
-      .width('100%')
-      .margin({ bottom: 16 })
-      
-      // 柱状图
-      Row() {
-        McBarChart({
-          options: this.seriesRadiusOption
-        })
-      }
-      .height(200)
-      .width('100%')
     }
     .width('100%')
-    .padding(16)
-    .backgroundColor('#FFFFFF')
-    .borderRadius(12)
-    .margin({ bottom: 12 })
   }
 
   @Builder
@@ -445,12 +748,22 @@ struct SportRecordPage {
   @Builder
   buildSportTypeStats() {
     Column() {
-      Text('运动次数占比')
-        .fontSize(16)
-        .fontWeight(500)
-        .fontColor('#333333')
-        .alignSelf(ItemAlign.Start)
-        .margin({ bottom: 12 })
+      Row() {
+        Text('运动占比')
+          .fontSize(16)
+          .fontWeight(500)
+          .fontColor('#333333')
+          .layoutWeight(1)
+
+        Text(this.selectedMetric)
+          .fontSize(12)
+          .fontColor('#666666')
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .backgroundColor('#F3F7F5')
+          .borderRadius(12)
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
       
       ForEach(this.sportTypeStats, (item: SportTypeStat, index: number) => {
         Row() {
@@ -465,7 +778,7 @@ struct SportRecordPage {
             .layoutWeight(1)
             .margin({ left: 8 })
           
-          Text(item.count.toString())
+          Text(item.display)
             .fontSize(14)
             .fontColor('#333333')
             .margin({ right: 8 })
@@ -505,7 +818,9 @@ struct SportRecordPage {
     if (this.selectedMetric === '运动次数') {
       return this.totalActivities.toString()
     } else if (this.selectedMetric === '运动时长') {
-      return Math.floor(this.totalTime / 60).toString()
+      return Math.max(0, Math.round(this.totalTime)).toString()
+    } else if (this.selectedMetric === '消耗热量') {
+      return Math.round(this.totalCalories).toString()
     }
     return '0'
   }
@@ -515,37 +830,38 @@ struct SportRecordPage {
       return '次'
     } else if (this.selectedMetric === '运动时长') {
       return '分钟'
+    } else if (this.selectedMetric === '消耗热量') {
+      return '千卡'
     }
     return ''
   }
 
-  private toggleMetric() {
-    if (this.selectedMetric === '运动次数') {
-      this.selectedMetric = '运动时长'
-    } else {
-      this.selectedMetric = '运动次数'
-    }
-    this.calculateSportStats()
+  private toggleSportTypeSelector(): void {
+    this.showSportTypeSelector = !this.showSportTypeSelector
   }
 
-  private openSportTypeDialog() {
-    let dialog = new CustomDialogController({ 
-      builder: SportTypeDialog({
-        onSelect: (type: number) => {
-          dialog.close()
-          this.currentType = type
-          this.showWeekSportRecord(this.curOffset)
-        },
-        currentIndex: this.currentType,
-      }),
-      alignment: DialogAlignment.Top,
-      gridCount: 4,
-      cancel: this.exitApp,
-      autoCancel: false,
-      backgroundBlurStyle: BlurStyle.NONE,
-      backgroundColor: '#ffeaeaea',
-      offset: { dx: 0, dy: 50 }
-    })
-    dialog.open()
+  private onSportTypeSelected(type: number): void {
+    const nextType = type
+    this.showSportTypeSelector = false
+    if (this.currentType === nextType) {
+      return
+    }
+    this.currentType = nextType
+    this.showWeekSportRecord(this.curOffset)
   }
+
+  private toggleMetricSelector(): void {
+    this.showMetricSelector = !this.showMetricSelector
+  }
+
+  private onMetricSelect(metric: string): void {
+    if (this.selectedMetric === metric) {
+      this.showMetricSelector = false
+      return
+    }
+    this.selectedMetric = metric
+    this.showMetricSelector = false
+    this.refreshVisualData()
+  }
+
 }

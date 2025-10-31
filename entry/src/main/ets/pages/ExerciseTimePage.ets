@@ -1,5 +1,5 @@
 import { CommonTitleView } from '../view/CommonTitleView'
-import { router } from '@kit.ArkUI'
+import { router, window } from '@kit.ArkUI'
 import appDataManager, { DataCallback } from '../tools/AppDataManager'
 import { SportModel } from '../appdata/Model'
 import { Log } from '../tools/Logger'
@@ -42,12 +42,20 @@ struct ExerciseTimePage {
   }
 
   private calculateExerciseStats() {
+    // 先按日期聚合数据
+    const dailyMinutes: Map<string, number> = new Map()
+    for (const item of this.exerciseData) {
+      const itemDate = new Date(item.start_time).toISOString().split('T')[0]
+      const minutes = Math.floor(item.use_time / 60)
+      const existing = dailyMinutes.get(itemDate) ?? 0
+      dailyMinutes.set(itemDate, existing + minutes)
+    }
+
+    // 从聚合数据计算统计数据
     this.allMinutes = 0
     let maxMinutes = 0
     let rewardDays = 0
-
-    for (let item of this.exerciseData) {
-      const minutes = Math.floor(item.use_time / 60)
+    for (const minutes of dailyMinutes.values()) {
       this.allMinutes = this.allMinutes + minutes
       if (minutes >= this.targetMinutes) {
         rewardDays = rewardDays + 1
@@ -58,10 +66,9 @@ struct ExerciseTimePage {
     }
     this.argMinutes = this.allMinutes / 7
 
-    // 计算今日锻炼时长（假设是最后一天的数据）
-    if (this.exerciseData.length > 0) {
-      this.currentMinutes = Math.floor(this.exerciseData[this.exerciseData.length - 1].use_time / 60)
-    }
+    // 计算今日锻炼时长（从聚合数据中获取）
+    const todayDate = DateUtils.getYMD()
+    this.currentMinutes = dailyMinutes.get(todayDate) ?? 0
 
     if (rewardDays > 0) {
       this.reward_str = "本周锻炼达标天数" + rewardDays + "天"
@@ -71,17 +78,9 @@ struct ExerciseTimePage {
     
     let mm_datas = new Array<number>()
     let mm_dates = new Array<string>()
-    out: for (let i = 0; i < this.dates.length; i++) {
+    for (let i = 0; i < this.dates.length; i++) {
       mm_dates.push(DateUtils.getWeek(this.dates[i]))
-      Log.i('exerciseCallback mm_dates:' + mm_dates[i])
-      for (let item of this.exerciseData) {
-        const itemDate = new Date(item.start_time).toISOString().split('T')[0]
-        if (this.dates[i] === itemDate) {
-          mm_datas.push(Math.floor(item.use_time / 60))
-          continue out
-        }
-      }
-      mm_datas.push(0)
+      mm_datas.push(dailyMinutes.get(this.dates[i]) ?? 0)
     }
     this.seriesRadiusOption.setVal({
       xAxis: { data: mm_dates },
@@ -94,7 +93,20 @@ struct ExerciseTimePage {
 
   onPageShow(): void {
     this.loadTargetMinutes()
+    targetManager.addListener(this.onTargetsChanged)
     this.showWeekExerciseRecord(this.curOffset)
+  }
+
+  aboutToDisappear(): void {
+    targetManager.removeListener(this.onTargetsChanged)
+  }
+
+  private onTargetsChanged = (targets: TargetValue) => {
+    const newTarget = targets.exercise_time_target
+    if (this.targetMinutes !== newTarget) {
+      this.targetMinutes = newTarget
+      this.calculateExerciseStats()
+    }
   }
 
   private async loadTargetMinutes() {
@@ -183,5 +195,6 @@ struct ExerciseTimePage {
         }.width('100%').height('91%')
       }
     }
+    .backgroundColor('#F5F5F5')
   }
 }

@@ -41,6 +41,12 @@
         "startWindowIcon": "$media:trp",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
+        "metadata": [
+          {
+            "name": "hwc-theme",
+            "value": "androidhwext:style/Theme.Emui.Light.NoTitleBar"
+          }
+        ],
         "skills": [
           {
             "entities": [

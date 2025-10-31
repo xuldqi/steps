@@ -1,11 +1,11 @@
-import { router } from '@kit.ArkUI'
-import { CommonTitleView } from '../view/CommonTitleView'
+import { router, window } from '@kit.ArkUI'
 import { SportModel } from '../appdata/Model'
 import AppDataManager, { DataCallback } from '../tools/AppDataManager'
 import { DateUtils } from '../tools/DateUtils'
 import { Log } from '../tools/Logger'
 import { Utils } from '../tools/Utils'
 import { McBarChart, Options } from '@mcui/mccharts'
+import EntryAbility from '../entryability/EntryAbility'
 
 interface ExerciseType {
   id: number
@@ -211,8 +211,7 @@ struct ExerciseRecordPage {
             })
         }
         .width('100%')
-        .height(56)
-        .padding({ left: 16, right: 16 })
+        .padding({ left: 16, right: 16, top: this.getSafeTopPadding() + 16, bottom: 16 })
         .backgroundColor('#FFFFFF')
         .alignItems(VerticalAlign.Center)
 
@@ -251,6 +250,14 @@ struct ExerciseRecordPage {
     }
     .width('100%')
     .height('100%')
+  }
+
+  private getSafeTopPadding(): number {
+    if (!EntryAbility.myWindowClass) {
+      return 0
+    }
+    const avoidArea = EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
+    return Math.max(0, avoidArea.topRect.height - 80)
   }
 
   @Builder buildTypeSelectDialog() {

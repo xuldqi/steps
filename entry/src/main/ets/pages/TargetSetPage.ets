@@ -1,11 +1,20 @@
-import { router } from '@kit.ArkUI';
+import { router, window } from '@kit.ArkUI';
 import preferencesUtil from '../tools/DataPreUtils';
 import { Log } from '../tools/Logger';
+import EntryAbility from '../entryability/EntryAbility';
 
 
 @Entry
 @Component
 struct TargetSetPage {
+
+  private getSafeTopPadding(): number {
+    if (!EntryAbility.myWindowClass) {
+      return 0
+    }
+    const avoidArea = EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
+    return Math.max(0, avoidArea.topRect.height)
+  }
 
   @State stepTarget:string = ''
   @State stepTargetNum:number = 5000
@@ -54,7 +63,11 @@ struct TargetSetPage {
         Image($r('app.media.back_btn_dark')).height(27).width(27).onClick(() => {
           router.back();
         }).alignSelf(ItemAlign.Start)
-      }.width('100%').height('7%').align(Alignment.Start).padding({left:10,right:10})
+      }
+      .width('100%')
+      .height(56)
+      .padding({ top: this.getSafeTopPadding(), left: 10, right: 10 })
+      .alignContent(Alignment.TopStart)
         Column() {
           this.buildTargetCard('步数目标', this.stepTarget, '步', this.stepTargetNum, 1000, 40000, 100, (value: number) => {
             this.updateStepTarget(value)

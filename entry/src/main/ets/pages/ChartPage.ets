@@ -1,13 +1,14 @@
 import { CommonTitleView } from '../view/CommonTitleView'
-import { router } from '@kit.ArkUI'
+import { router, window } from '@kit.ArkUI'
 import { McBarChart, Options } from '@mcui/mccharts'
 import appDataManager, { DataCallback } from '../tools/AppDataManager'
-import { PerStepModel } from '../appdata/Model'
+import { PerStepModel, SportModel } from '../appdata/Model'
 import { DateUtils } from '../tools/DateUtils'
 import { Log } from '../tools/Logger'
 import { TargetProgressView } from '../view/TargetModifyDialog'
 import preferencesUtil from '../tools/DataPreUtils'
 import targetManager, { TargetValue } from '../tools/TargetManager'
+import { Utils } from '../tools/Utils'
 
 @Entry
 @Component
@@ -19,6 +20,8 @@ struct ChartPage {
   @State argCalories: number = 0
   @State targetCalories: number = 300
   @State currentCalories: number = 0
+  @State viewMode: 'week' | 'month' | 'year' = 'week'
+  @State windowEndDate: Date = new Date()
   private dates: Array<string> = new Array<string>()
   
   @State seriesRadiusOption: Options = new Options({
@@ -31,57 +34,140 @@ struct ChartPage {
         data: [0, 0, 0, 0, 0, 0, 0] }]
   })
 
-  // 热量数据
-  @State calorieChartData: Array<PerStepModel> = new Array<PerStepModel>()
+  // 热量数据 - 从运动记录中获取
+  @State sportRecords: Array<SportModel> = new Array<SportModel>()
 
-  private calorieCallback: DataCallback<PerStepModel> = {
-    onDataResult: (type: number, result: PerStepModel[], isReturnFirstData: boolean): void => {
-      this.calorieChartData = result
+  private sportCallback: DataCallback<SportModel> = {
+    onDataResult: (type: number, result: SportModel[], isReturnFirstData: boolean): void => {
+      console.info('[ChartPage] 收到运动记录数据:', result?.length || 0, '条')
+      if (result && result.length > 0) {
+        console.info('[ChartPage] 第一条记录 - start_time:', result[0].start_time, 'cal:', result[0].cal, 'steps:', result[0].steps)
+      }
+      // 根据当前视图模式筛选时间范围内的记录
+      const filtered = this.filterRecordsByTimeRange(result || [])
+      this.sportRecords = filtered
+      console.info('[ChartPage] 筛选后的记录数量:', filtered.length)
       this.calculateCalorieStats()
     }
   }
 
-  private calculateCalorieStats() {
-    this.allCalories = 0
-    let maxCalories = 0
-    let rewardDays = 0
+  private filterRecordsByTimeRange(records: Array<SportModel>): Array<SportModel> {
+    if (this.dates.length === 0) {
+      return records
+    }
+    const firstDate = this.parseDateFromYMD(this.dates[0])
+    const lastDate = this.parseDateFromYMD(this.dates[this.dates.length - 1])
+    const startMs = this.getStartOfDay(firstDate)
+    const endMs = this.getEndOfDay(lastDate)
+    
+    return records.filter(record => {
+      return record.start_time >= startMs && record.start_time <= endMs
+    })
+  }
 
-    for (let item of this.calorieChartData) {
-      const calories = Math.round(item.steps / 1000 * 50)
+  private getCaloriesForRecord(record: SportModel): number {
+    let calories = Number.parseFloat(record.cal ?? '0')
+    if (Number.isNaN(calories) || calories <= 0) {
+      calories = Math.round(parseFloat(Utils.getDistanceByStep(record.steps)) * 50)
+    }
+    return Number.isNaN(calories) ? 0 : calories
+  }
+
+  private getStartOfDay(date: Date): number {
+    const copy = new Date(date)
+    copy.setHours(0, 0, 0, 0)
+    return copy.getTime()
+  }
+
+  private getEndOfDay(date: Date): number {
+    const copy = new Date(date)
+    copy.setHours(23, 59, 59, 999)
+    return copy.getTime()
+  }
+
+  private calculateCalorieStats() {
+    console.info('[ChartPage] calculateCalorieStats: 运动记录数量=', this.sportRecords.length)
+    
+    // 按日期分组计算每日热量
+    const dailyCalories: Map<string, number> = new Map()
+    
+    for (const record of this.sportRecords) {
+      const recordDate = new Date(record.start_time)
+      const dateKey = this.formatYMD(recordDate)
+      const calories = this.getCaloriesForRecord(record)
+      
+      if (calories > 0) {
+        const current = dailyCalories.get(dateKey) || 0
+        dailyCalories.set(dateKey, current + calories)
+      }
+    }
+    
+    console.info('[ChartPage] calculateCalorieStats: 每日热量数据=', Array.from(dailyCalories.entries()))
+    
+    // 计算总热量和平均热量
+    this.allCalories = 0
+    let rewardDays = 0
+    
+    dailyCalories.forEach((calories) => {
       this.allCalories = this.allCalories + calories
       if (calories >= this.targetCalories) {
         rewardDays = rewardDays + 1
       }
-      if (maxCalories < calories) {
-        maxCalories = calories
-      }
-    }
-    this.argCalories = this.allCalories / 7
+    })
+    
+    const divisor = dailyCalories.size > 0 ? dailyCalories.size : 1
+    this.argCalories = this.allCalories / divisor
 
-    // 计算今日热量（假设是最后一天的数据）
-    if (this.calorieChartData.length > 0) {
-      this.currentCalories = Math.round(this.calorieChartData[this.calorieChartData.length - 1].steps / 1000 * 50)
-    }
+    // 计算今日热量
+    const todayDate = DateUtils.getYMD()
+    this.currentCalories = dailyCalories.get(todayDate) || 0
 
-    if (rewardDays > 0) {
-      this.reward_str = "本周热量达标天数" + rewardDays + "天"
+    if (this.viewMode === 'year') {
+      this.reward_str = ''
     } else {
-      this.reward_str = "最近一周没有一天热量达标哦！"
+      if (rewardDays > 0) {
+        this.reward_str = (this.viewMode === 'week' ? '本周' : '近30天') + '热量达标天数' + rewardDays + '天'
+      } else {
+        this.reward_str = (this.viewMode === 'week' ? '最近一周' : '近30天') + '没有一天热量达标哦！'
+      }
     }
     
     let mm_datas = new Array<number>()
     let mm_dates = new Array<string>()
-    out: for (let i = 0; i < this.dates.length; i++) {
-      mm_dates.push(DateUtils.getWeek(this.dates[i]))
-      Log.i('calorieCallback mm_dates:' + mm_dates[i])
-      for (let item of this.calorieChartData) {
-        if (this.dates[i] === item.date) {
-          mm_datas.push(Math.round(item.steps / 1000 * 50))
-          continue out
+    
+    // 遍历日期范围，查找对应的热量数据
+    for (let i = 0; i < this.dates.length; i++) {
+      const calories = dailyCalories.get(this.dates[i]) || 0
+      
+      // 只有有数据且热量大于0时才添加到图表
+      if (calories > 0) {
+        if (this.viewMode === 'week') {
+          // 周视图：显示"一二三四五六日"
+          const d = this.parseDateFromYMD(this.dates[i])
+          const jsDay = d.getDay() // 周日0、周一1
+          const weekDays = ['日', '一', '二', '三', '四', '五', '六']
+          mm_dates.push(weekDays[jsDay])
+        } else if (this.viewMode === 'month') {
+          // 月视图：只显示周一的日期
+          const d = this.parseDateFromYMD(this.dates[i])
+          const jsDay = d.getDay() // 周日0、周一1
+          if (jsDay === 1) { // 只显示周一
+            mm_dates.push(this.formatMDLabel(this.dates[i]))
+          } else {
+            continue // 跳过非周一
+          }
+        } else {
+          // 年视图：显示月份数字
+          const d = this.parseDateFromYMD(this.dates[i])
+          const month = (d.getMonth() + 1).toString()
+          mm_dates.push(month)
         }
+        mm_datas.push(calories)
       }
-      mm_datas.push(0)
     }
+    
+    console.info('[ChartPage] calculateCalorieStats: 图表数据 - 标签=', mm_dates, '数值=', mm_datas)
+    
     this.seriesRadiusOption.setVal({
       xAxis: { data: mm_dates },
       series: [{ name: '热量', barStyle: { 
@@ -91,15 +177,150 @@ struct ChartPage {
     })
   }
 
+  private parseDateFromYMD(ymd: string): Date {
+    const parts = ymd.split('-')
+    return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]))
+  }
+
+  private formatMDLabel(ymd: string): string {
+    const parts = ymd.split('-')
+    const month = parseInt(parts[1])
+    const day = parseInt(parts[2])
+    return `${month}/${day}`
+  }
+
   onPageShow(): void {
     Log.i('ChartPage onPageShow called')
     this.loadTargetCalories()
-    this.showWeekCalorieRecord(this.curOffset)
+    targetManager.addListener(this.onTargetsChanged)
+    this.windowEndDate = new Date()
+    // 刷新数据
+    this.refreshData()
+  }
+
+  private refreshData() {
+    this.loadByViewMode()
+  }
+
+  aboutToDisappear(): void {
+    targetManager.removeListener(this.onTargetsChanged)
+  }
+
+  private onTargetsChanged = (targets: TargetValue) => {
+    const newTarget = targets.calorie_target
+    if (this.targetCalories !== newTarget) {
+      this.targetCalories = newTarget
+      this.calculateCalorieStats()
+    }
+  }
+
+  private loadByViewMode() {
+    if (this.viewMode === 'week') {
+      this.seriesRadiusOption.setVal({ title: { text: '热量' } })
+      this.loadWeekWindow()
+    } else if (this.viewMode === 'month') {
+      this.seriesRadiusOption.setVal({ title: { text: '热量' } })
+      this.loadDailyWindow(30)
+    } else {
+      this.seriesRadiusOption.setVal({ title: { text: '热量' } })
+      this.showYearRecord()
+      // 顶部区间显示
+      const end = new Date(this.windowEndDate)
+      const start = new Date(end.getFullYear(), end.getMonth() - 11, 1)
+      this.top_week = this.formatYMCH(start) + ' - ' + this.formatYMCH(end)
+    }
   }
 
   private async loadTargetCalories() {
     await targetManager.loadTargets()
     this.targetCalories = targetManager.getTarget('calorie_target')
+  }
+
+  private loadWeekWindow() {
+    // 将 windowEndDate 对齐到其所在自然周（周一为一周开始）
+    const ref = new Date(this.windowEndDate)
+    const jsDay = ref.getDay() // 0-周日,1-周一,...
+    const offsetToMonday = (jsDay + 6) % 7 // 周一=0
+    const start = new Date(ref)
+    start.setDate(ref.getDate() - offsetToMonday)
+    const end = new Date(start)
+    end.setDate(start.getDate() + 6)
+
+    this.dates.length = 0
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start)
+      d.setDate(start.getDate() + i)
+      const s = this.formatYMD(d)
+      this.dates.push(s)
+    }
+
+    this.top_week = this.formatDateCH(start) + ' - ' + this.formatDateCH(end)
+
+    // 从运动记录中加载数据
+    const startMs = this.getStartOfDay(start)
+    const endMs = this.getEndOfDay(end)
+    console.info('[ChartPage] loadWeekWindow: 查询时间范围', new Date(startMs), '到', new Date(endMs))
+    appDataManager.findSportByType(0, this.sportCallback, false) // 0表示查询所有类型
+  }
+
+  private loadDailyWindow(sizeDays: number) {
+    const end = new Date(this.windowEndDate)
+    const start = new Date(end)
+    start.setDate(end.getDate() - sizeDays + 1)
+
+    this.dates.length = 0
+    for (let i = 0; i < sizeDays; i++) {
+      const d = new Date(start)
+      d.setDate(start.getDate() + i)
+      const s = this.formatYMD(d)
+      this.dates.push(s)
+    }
+
+    this.top_week = this.formatDateCH(start) + ' - ' + this.formatDateCH(end)
+
+    // 从运动记录中加载数据
+    const startMs = this.getStartOfDay(start)
+    const endMs = this.getEndOfDay(end)
+    console.info('[ChartPage] loadDailyWindow: 查询时间范围', new Date(startMs), '到', new Date(endMs))
+    appDataManager.findSportByType(0, this.sportCallback, false) // 0表示查询所有类型
+  }
+
+  private showYearRecord() {
+    const end = new Date(this.windowEndDate)
+    const start = new Date(end.getFullYear(), end.getMonth() - 11, 1)
+
+    this.dates.length = 0
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(start.getFullYear(), start.getMonth() + i, 1)
+      const s = this.formatYMD(d)
+      this.dates.push(s)
+    }
+
+    // 从运动记录中加载全年数据
+    const startMs = this.getStartOfDay(start)
+    const endMs = this.getEndOfDay(end)
+    console.info('[ChartPage] showYearRecord: 查询时间范围', new Date(startMs), '到', new Date(endMs))
+    appDataManager.findSportByType(0, this.sportCallback, false) // 0表示查询所有类型
+  }
+
+  private formatYMD(date: Date): string {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  private formatDateCH(date: Date): string {
+    const year = date.getFullYear()
+    const month = date.getMonth() + 1
+    const day = date.getDate()
+    return `${year}年${month}月${day}日`
+  }
+
+  private formatYMCH(date: Date): string {
+    const year = date.getFullYear()
+    const month = date.getMonth() + 1
+    return `${year}年${month}月`
   }
 
   async onTargetModified(newValue: number) {
@@ -119,60 +340,126 @@ struct ChartPage {
     this.dates.push(DateUtils.getYMD_(1 + 7 * i))
     this.dates.push(DateUtils.getYMD_(7 * i))
     
-    // 获取步数数据
-    appDataManager.getStepPerDayWeekList(this.calorieCallback)
+    // 从运动记录中加载数据
+    appDataManager.findSportByType(0, this.sportCallback, false)
   }
 
   build() {
     Column() {
-      CommonTitleView({data1:{str1:'热量消耗统计'},cancel:()=>{
+      CommonTitleView({data1:{str1:'热量'},cancel:()=>{
           router.back()
       }})
       Scroll(){
         Column(){
-          Row(){
-            Image($r('app.media.back_btn_dark')).width(20).height(20).margin(5).onClick(() => {
-              this.curOffset = this.curOffset + 1
-              this.showWeekCalorieRecord(this.curOffset)
-            })
-            Text(this.top_week).fontSize(14)
-            Image($r('app.media.right_btn')).width(20).height(20).margin(5).onClick(() => {
-              this.curOffset = this.curOffset - 1
-              this.showWeekCalorieRecord(this.curOffset)
-            })
-          }.margin(7)
-                 Row(){
-                   Image($r('app.media.week_report_reward')).width(18).height(18)
-                   Text(this.reward_str).fontSize(12).fontColor('#ff3e3e3e')
-                 }
-          Row() {
+          // 控制区域和图表区域 - 合并为一个白色卡片
+          Column(){
+            // 维度切换（周 / 月 / 年）
+            Row(){
+              Button('周')
+                .backgroundColor(this.viewMode === 'week' ? '#0cc291' : '#EEEEEE')
+                .fontColor(this.viewMode === 'week' ? '#FFFFFF' : '#333333')
+                .height(32).padding({ left:12, right:12 }).borderRadius(16)
+                .onClick(()=>{ this.viewMode='week'; this.windowEndDate = new Date(); this.loadByViewMode() })
+              Button('月')
+                .backgroundColor(this.viewMode === 'month' ? '#0cc291' : '#EEEEEE')
+                .fontColor(this.viewMode === 'month' ? '#FFFFFF' : '#333333')
+                .height(32).padding({ left:12, right:12 }).borderRadius(16).margin({ left:8 })
+                .onClick(()=>{ this.viewMode='month'; this.windowEndDate = new Date(); this.loadByViewMode() })
+              Button('年')
+                .backgroundColor(this.viewMode === 'year' ? '#0cc291' : '#EEEEEE')
+                .fontColor(this.viewMode === 'year' ? '#FFFFFF' : '#333333')
+                .height(32).padding({ left:12, right:12 }).borderRadius(16).margin({ left:8 })
+                .onClick(()=>{ this.viewMode='year'; this.windowEndDate = new Date(); this.loadByViewMode() })
+            }.margin({ top:16, bottom:8 }).width('100%').justifyContent(FlexAlign.Center)
+
+            // 日期范围选择器
+            Row(){
+              Image($r('app.media.back_btn_dark')).width(20).height(20).margin(5).onClick(() => {
+                if (this.viewMode === 'week') {
+                  this.windowEndDate.setDate(this.windowEndDate.getDate() - 7)
+                  this.loadByViewMode()
+                } else if (this.viewMode === 'month') {
+                  this.windowEndDate.setDate(this.windowEndDate.getDate() - 30)
+                  this.loadByViewMode()
+                } else {
+                  // 年视图：整体往前一个月
+                  this.windowEndDate = new Date(this.windowEndDate.getFullYear(), this.windowEndDate.getMonth() - 1, 1)
+                  this.loadByViewMode()
+                }
+              })
+              Text(this.top_week).fontSize(14)
+              Image($r('app.media.right_btn')).width(20).height(20).margin(5).onClick(() => {
+                if (this.viewMode === 'week') {
+                  this.windowEndDate.setDate(this.windowEndDate.getDate() + 7)
+                  // 不能超出今天
+                  const today = new Date()
+                  if (this.windowEndDate > today) this.windowEndDate = today
+                  this.loadByViewMode()
+                } else if (this.viewMode === 'month') {
+                  this.windowEndDate.setDate(this.windowEndDate.getDate() + 30)
+                  const today = new Date()
+                  if (this.windowEndDate > today) this.windowEndDate = today
+                  this.loadByViewMode()
+                } else {
+                  this.windowEndDate = new Date(this.windowEndDate.getFullYear(), this.windowEndDate.getMonth() + 1, 1)
+                  const now = new Date()
+                  if (this.windowEndDate > now) this.windowEndDate = new Date(now.getFullYear(), now.getMonth(), 1)
+                  this.loadByViewMode()
+                }
+              })
+            }.margin({ top:4, bottom:16 }).width('100%').justifyContent(FlexAlign.Center)
+            
+            // 图表区域
             McBarChart({
               options: this.seriesRadiusOption
             })
-          }.height('30%').margin({top:8})
+            .height(200)
+            .width('100%')
+          }
+          .width('92%')
+          .backgroundColor('#FFFFFF')
+          .borderRadius(16)
+          .padding(16)
+          .margin({ top: 8, bottom: 8 })
           
-          // 目标进度
-          TargetProgressView({
-            targetName: '热量',
-            currentValue: this.currentCalories,
-            targetValue: this.targetCalories,
-            unit: '千卡'
-          })
+          // 目标进度 - 白色卡片容器
+          Column(){
+            TargetProgressView({
+              targetName: '热量',
+              currentValue: this.currentCalories,
+              targetValue: this.targetCalories,
+              unit: '千卡'
+            })
+          }
+          .width('92%')
           .margin({ top: 12 })
-          Row(){
-            Text(){
-              Span('总消耗\n')
-              Span(this.allCalories.toString()).fontWeight(600).fontSize(30)
-              Span('千卡')
-            }.margin({ top:8,bottom:10,right:5 }).layoutWeight(1).borderRadius(15).padding(15).backgroundColor('#FFFFFF')
-            Text(){
-              Span('平均每日消耗\n')
-              Span(this.argCalories.toFixed(0)).fontWeight(600).fontSize(30)
-              Span('千卡')
-            }.margin({ left:5,top:8,bottom:10}).layoutWeight(1).borderRadius(15).padding(15).backgroundColor('#FFFFFF')
-          }.margin({top:10}).width('92%')
+          .padding(16)
+          .borderRadius(15)
+          .backgroundColor('#FFFFFF')
+
+          // 汇总指标 - 同一张白色卡片
+          Column(){
+            Row(){
+              Column(){
+                Text('总消耗').fontSize(12).fontColor('#666666')
+                Text(this.allCalories.toString()).fontWeight(600).fontSize(30).margin({ top: 6 })
+                Text('千卡').fontSize(12).fontColor('#666666')
+              }.layoutWeight(1)
+              Column(){
+                Text('平均每日消耗').fontSize(12).fontColor('#666666')
+                Text(this.argCalories.toFixed(0)).fontWeight(600).fontSize(30).margin({ top: 6 })
+                Text('千卡').fontSize(12).fontColor('#666666')
+              }.layoutWeight(1)
+            }
+          }
+          .width('92%')
+          .margin({ top: 10 })
+          .padding(16)
+          .borderRadius(15)
+          .backgroundColor('#FFFFFF')
         }.width('100%').height('91%')
       }
     }
+    .backgroundColor('#F5F5F5')
   }
 }

@@ -1,9 +1,11 @@
 import router from '@ohos.router'
-import {Log} from '../tools/Logger'
+import { Log } from '../tools/Logger'
 import { YSXYDialog } from '../view/YSXYDialog'
 import preferencesUtil from '../tools/DataPreUtils'
 import { common } from '@kit.AbilityKit'
 import { Utils } from '../tools/Utils'
+import EntryAbility from '../entryability/EntryAbility'
+import { window } from '@kit.ArkUI'
 
 @Entry
 @Component
@@ -87,10 +89,28 @@ struct Index {
         Text('生\n命\n,')
           .fontSize(15).width(20).height(130).margin({left:20}).align(Alignment.TopStart)
       }
-      .height('92%').width('100%').alignContent(Alignment.Center)
-      Stack() {
-        Image($r('app.media.icon')).height('70%').width('AUTO').borderRadius(10)
-      }.height('8%').width('100%').alignContent(Alignment.Center)
+      .width('100%')
+      .layoutWeight(1)
+      .alignContent(Alignment.Center)
+      Row() {
+        Image($r('app.media.icon'))
+          .height(64)
+          .width(64)
+          .borderRadius(10)
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      .padding({ bottom: this.getSafeBottomPadding() })
     }
+    .width('100%')
+    .height('100%')
+  }
+
+  private getSafeBottomPadding(): number {
+    if (!EntryAbility.myWindowClass) {
+      return 48
+    }
+    const avoidArea = EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
+    return Math.max(48, avoidArea.bottomRect.height + 24)
   }
 }

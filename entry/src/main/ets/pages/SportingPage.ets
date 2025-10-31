@@ -18,7 +18,7 @@ struct SportingPage {
   @State sportSteps:string = '0 步'
   @State sportCals:string = '0 Kal'
   @State sportDistance:string = '0.00'
-  @State iconSize: number = 90 //按键图标大小
+  @State iconSize: number = 70 //按键图标大小
   private startSportStepsNum:number = 0
   private sportStepsNum:number = 0
   private startSportTimeStamp:number = 0
@@ -105,6 +105,12 @@ struct SportingPage {
     this.data1.str1 = Utils.getSportTypeName(this.sportType)
     Log.i('SportingPage Received parameter: ' + params.type + ','+this.data1.str1 );
     StepData.addCallback(this.stepsCallback)
+    if (!this.isSportStart) {
+      this.isSportStart = true
+      this.isSportPause = false
+      Utils.showToast('运动已开始')
+      this.startSport()
+    }
   }
 
   onPageHide(): void {
@@ -147,23 +153,23 @@ struct SportingPage {
         }
       }})
       Column(){
-        Text(this.sportDistance).fontWeight(600).fontSize(60)
-        Text('距离/公里').fontWeight(350).fontSize(20)
+        Text(this.sportDistance).fontWeight(600).fontSize(52)
+        Text('距离/公里').fontWeight(350).fontSize(18)
         Row(){
           Column(){
-            Image($r('app.media.count_speed')).width(30).height(30)
-            Text(this.sportSteps).fontWeight(400).fontSize(32)
-            Text('步数').fontWeight(400).fontSize(13).fontColor('#ff6d6d6d')
+            Image($r('app.media.count_speed')).width(24).height(24)
+            Text(this.sportSteps).fontWeight(400).fontSize(24)
+            Text('步数').fontWeight(400).fontSize(12).fontColor('#ff6d6d6d')
           }.width('33.3%')
           Column(){
-            Image($r('app.media.count_time')).width(30).height(30)
-            Text(this.sportTime).fontWeight(400).fontSize(32)
-            Text('时间').fontWeight(400).fontSize(13).fontColor('#ff6d6d6d')
+            Image($r('app.media.count_time')).width(24).height(24)
+            Text(this.sportTime).fontWeight(400).fontSize(24)
+            Text('时间').fontWeight(400).fontSize(12).fontColor('#ff6d6d6d')
           }.width('33.3%')
           Column(){
-            Image($r('app.media.count_kal')).width(30).height(30)
-            Text(this.sportCals).fontWeight(400).fontSize(32)
-            Text('卡路里/千卡').fontWeight(400).fontSize(13).fontColor('#ff6d6d6d')
+            Image($r('app.media.count_kal')).width(24).height(24)
+            Text(this.sportCals).fontWeight(400).fontSize(24)
+            Text('卡路里/千卡').fontWeight(400).fontSize(12).fontColor('#ff6d6d6d')
           }.width('33.3%')
         }.width('100%').margin(30)
 

@@ -16,6 +16,7 @@
     "pages/SportStartingPage",
     "pages/ChartPage",
     "pages/StepTrendPage",
+    "pages/DistanceTrendPage",
     "pages/ExerciseTimePage",
     "pages/ActivityCountPage",
     "pages/SportTargetSetPage",
@@ -25,13 +26,17 @@
     "pages/ExerciseRecordPage",
     "pages/AddExercisePage",
     "pages/SettingPage",
-    "pages/LoginPage",
     "pages/BitMapPage",
     "pages/EditMainCardPage",
     "pages/WaterRecordPage",
     "pages/BowelRecordPage",
     "pages/MenstruationRecordPage",
     "pages/SleepRecordPage",
-    "pages/MoodRecordPage"
+    "pages/MoodRecordPage",
+    "pages/WeightTrendPage",
+    "pages/WeightCalendarPage",
+    "pages/BasalMetabolismPage",
+    "pages/BodyMassIndexPage",
+    "pages/UserProfilePage"
   ]
 }

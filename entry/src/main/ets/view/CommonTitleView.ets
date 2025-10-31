@@ -1,9 +1,11 @@
 
+import { window } from '@kit.ArkUI'
+import EntryAbility from '../entryability/EntryAbility'
+
 export interface CommonTitleData {
   str1: string,
 }
 
-//计算器计算按钮
 @Component
 export struct CommonTitleView {
 
@@ -14,32 +16,46 @@ export struct CommonTitleView {
   @State str2: string = ''
   cancel: () => void = () => {
   }
+  useSafeTop: boolean = true
+
+  private getSafeTopPadding(): number {
+    if (!this.useSafeTop || !EntryAbility.myWindowClass) {
+      return 0
+    }
+    const avoidArea = EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
+    return Math.max(0, avoidArea.topRect.height - 80)
+  }
 
   build() {
     Column(){
+      if (this.getSafeTopPadding() > 0) {
+        Blank().height(this.getSafeTopPadding())
+      }
 
-
-      Stack() {
-        Row(){
-          Text(this.data1.str1)
-            .fontSize(16)
-            .height('100%')
-            .layoutWeight(1)
-            .textAlign(TextAlign.Start).fontWeight(500)
-            .fontColor('#000000').height('100%')
+      Row() {
+        Image($r('app.media.back_btn_dark'))
+          .height(28)
+          .width(28)
+          .onClick(() => {
+            this.cancel()
+          })
+        Text(this.data1.str1)
+          .fontSize(18)
+          .fontWeight(500)
+          .fontColor('#000000')
+          .margin({ left: 12 })
+          .layoutWeight(1)
+          .textAlign(TextAlign.Start)
+        if (this.str2 && this.str2.length > 0) {
           Text(this.str2)
             .fontSize(12)
-            .height('100%')
-            .layoutWeight(1)
-            .textAlign(TextAlign.End)
-            .fontColor('#ff4c4c4c').height('100%')
-        }.padding({left:35,right:10})
-        Image($r('app.media.back_btn_dark')).height(27).width(27).onClick(() => {
-          this.cancel()
-        }).alignSelf(ItemAlign.Start)
-      }.width('100%').height('7%').align(Alignment.Start).padding({left:10,right:10})
-      Column() {
-      }.width('100%').height(0.5).backgroundColor('#ffe0e0e0')
+            .fontColor('#4c4c4c')
+        }
+      }
+      .height(56)
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 16, right: 16 })
     }
   }
 }

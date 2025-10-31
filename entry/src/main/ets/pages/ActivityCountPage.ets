@@ -1,5 +1,5 @@
 import { CommonTitleView } from '../view/CommonTitleView'
-import { router } from '@kit.ArkUI'
+import { router, window } from '@kit.ArkUI'
 import appDataManager, { DataCallback } from '../tools/AppDataManager'
 import { SportModel } from '../appdata/Model'
 import { Log } from '../tools/Logger'
@@ -42,25 +42,32 @@ struct ActivityCountPage {
   }
 
   private calculateActivityStats() {
+    // 先按日期聚合数据
+    const dailyActivities: Map<string, number> = new Map()
+    for (const item of this.activityData) {
+      const itemDate = new Date(item.start_time).toISOString().split('T')[0]
+      const existing = dailyActivities.get(itemDate) ?? 0
+      dailyActivities.set(itemDate, existing + 1)
+    }
+
+    // 从聚合数据计算统计数据
     this.allActivities = 0
     let maxActivities = 0
     let rewardDays = 0
-
-    for (let item of this.activityData) {
-      this.allActivities = this.allActivities + 1
-      if (1 >= this.targetActivities) { // 每次活动都算达标
+    for (const count of dailyActivities.values()) {
+      this.allActivities = this.allActivities + count
+      if (count >= this.targetActivities) {
         rewardDays = rewardDays + 1
       }
-      if (maxActivities < 1) {
-        maxActivities = 1
+      if (maxActivities < count) {
+        maxActivities = count
       }
     }
     this.argActivities = this.allActivities / 7
 
-    // 计算今日活动次数（假设是最后一天的数据）
-    if (this.activityData.length > 0) {
-      this.currentActivities = 1 // 每次活动计为1次
-    }
+    // 计算今日活动次数（从聚合数据中获取）
+    const todayDate = DateUtils.getYMD()
+    this.currentActivities = dailyActivities.get(todayDate) ?? 0
 
     if (rewardDays > 0) {
       this.reward_str = "本周活动达标天数" + rewardDays + "天"
@@ -70,17 +77,9 @@ struct ActivityCountPage {
     
     let mm_datas = new Array<number>()
     let mm_dates = new Array<string>()
-    out: for (let i = 0; i < this.dates.length; i++) {
+    for (let i = 0; i < this.dates.length; i++) {
       mm_dates.push(DateUtils.getWeek(this.dates[i]))
-      Log.i('activityCallback mm_dates:' + mm_dates[i])
-      for (let item of this.activityData) {
-        const itemDate = new Date(item.start_time).toISOString().split('T')[0]
-        if (this.dates[i] === itemDate) {
-          mm_datas.push(1) // 每次活动计为1次
-          continue out
-        }
-      }
-      mm_datas.push(0)
+      mm_datas.push(dailyActivities.get(this.dates[i]) ?? 0)
     }
     this.seriesRadiusOption.setVal({
       xAxis: { data: mm_dates },
@@ -93,7 +92,20 @@ struct ActivityCountPage {
 
   onPageShow(): void {
     this.loadTargetActivities()
+    targetManager.addListener(this.onTargetsChanged)
     this.showWeekActivityRecord(this.curOffset)
+  }
+
+  aboutToDisappear(): void {
+    targetManager.removeListener(this.onTargetsChanged)
+  }
+
+  private onTargetsChanged = (targets: TargetValue) => {
+    const target = targets.activity_count_target
+    if (this.targetActivities !== target) {
+      this.targetActivities = target
+      this.calculateActivityStats()
+    }
   }
 
   private async loadTargetActivities() {
@@ -182,5 +194,6 @@ struct ActivityCountPage {
         }.width('100%').height('91%')
       }
     }
+    .backgroundColor('#F5F5F5')
   }
 }

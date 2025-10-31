@@ -1,4 +1,6 @@
 import web_webview from '@ohos.web.webview';
+import { window } from '@kit.ArkUI';
+import EntryAbility from '../entryability/EntryAbility';
 
 @Entry
 @Component
@@ -6,22 +8,15 @@ struct XYPage {
   @State message: string = '微步运动'
   controller: web_webview.WebviewController = new web_webview.WebviewController();
 
+  private getSafeTopPadding(): number {
+    if (!EntryAbility.myWindowClass) {
+      return 0
+    }
+    const avoidArea = EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
+    return Math.max(0, avoidArea.topRect.height)
+  }
+
   onPageShow(): void {
-    // let context = getContext() as common.UIAbilityContext;
-    // try {
-    //   context.resourceManager.getRawFileContent("xy.txt", (error: BusinessError, value: Uint8Array) => {
-    //     if (error != null) {
-    //       Log.i('error is :' + error);
-    //     } else {
-    //       let textDecoder = util.TextDecoder.create('gbk')
-    //       this.message = textDecoder.decodeWithStream(value)
-    //     }
-    //   });
-    // } catch (error) {
-    //   let code = (error as BusinessError).code;
-    //   let message = (error as BusinessError).message;
-    //   Log.i(`callback getRawFileContent failed, error code: ${code}, message: ${message}.`);
-    // }
   }
 
   build() {
@@ -33,17 +28,22 @@ struct XYPage {
           .alignSelf(ItemAlign.Center)
           .textAlign(TextAlign.Center)
           .fontColor('#0cc291')
-      }.width('100%').height('7%').align(Alignment.Center)
+      }
+      .width('100%')
+      .height(56)
+      .padding({ top: this.getSafeTopPadding() })
+      .alignItems(HorizontalAlign.Center)
+      .justifyContent(FlexAlign.Center)
 
       Column() {
       }.width('100%').height(1).backgroundColor('#f0f0f0')
-      // Scroll(this.scroller){
-      //   Text(this.message).width('100%')
-      //     .height('810%').textAlign(TextAlign.Start)
-      //     .padding({left:10,right:10,top:10,bottom:10})
-      // }.width('100%').height('91%').align(Alignment.TopStart)
+      
       Web({ src: $rawfile("yhxy.htm"), controller: this.controller })
-        .width('100%').height('91%').align(Alignment.TopStart)
+        .layoutWeight(1)
+        .width('100%')
+        .align(Alignment.TopStart)
     }
+    .width('100%')
+    .height('100%')
   }
 }

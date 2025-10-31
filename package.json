@@ -4,7 +4,8 @@
   "description": "StepSports Application",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "emu:run": "bash ./install_emulator.sh"
   },
   "keywords": [],
   "author": "",

@@ -1,4 +1,4 @@
-import { router } from '@kit.ArkUI'
+import { router, window } from '@kit.ArkUI'
 import { MainCardItemModel } from '../appdata/Model';
 import mainCardManager from '../tools/MainCardManager'
 import { MainCardManager } from '../tools/MainCardManager'
@@ -103,11 +103,34 @@ struct EditMainCardPage {
   }
 
   toggleCardVisibility(item: MainCardItemModel, index: number) {
-    // 切换卡片的展示状态
-    item.isAdded = !item.isAdded
-    Log.i(`Toggle card ${item.title}: ${item.isAdded ? 'added' : 'removed'}`)
-    
-    // 保存数据
+    const targetItem = this.mainCardItemModels[index]
+    if (!targetItem) {
+      return
+    }
+
+    const toggled = !targetItem.isAdded
+    targetItem.isAdded = toggled
+    targetItem.visible = true
+
+    // 从原位置移除
+    this.mainCardItemModels.splice(index, 1)
+
+    // 重新插入到对应的分组位置
+    const headDeleteIndex = this.getHeadIndex(MainCardManager.HEAD_DELETE)
+    if (headDeleteIndex < 0) {
+      Log.e('EditMainCardPage toggleCardVisibility: head delete index missing')
+      return
+    }
+
+    if (toggled) {
+      // 加入「已展示」列表，放在删除分隔符之前
+      this.mainCardItemModels.splice(headDeleteIndex, 0, targetItem)
+    } else {
+      // 加入「未展示」列表，放在删除分隔符之后
+      this.mainCardItemModels.splice(headDeleteIndex + 1, 0, targetItem)
+    }
+
+    Log.i(`Toggle card ${targetItem.title}: ${toggled ? 'added' : 'removed'}`)
     this.saveData()
   }
 
@@ -137,5 +160,14 @@ struct EditMainCardPage {
     }
     Log.i("MainCard saveData:"+data);
     mainCardManager.saveItemCardData(data);
+  }
+
+  private getHeadIndex(type: number): number {
+    for (let i = 0; i < this.mainCardItemModels.length; i++) {
+      if (this.mainCardItemModels[i].type === type) {
+        return i
+      }
+    }
+    return -1
   }
 }

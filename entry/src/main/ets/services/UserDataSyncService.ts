@@ -3,14 +3,12 @@
  * 负责本地数据与云端数据的同步
  * 适配StepSportszc项目的数据结构
  */
-import { HuaweiAuthService, HuaweiUserInfo } from './HuaweiAuthService';
 import { CloudDBService } from './CloudDBService';
 import { CloudUser, CloudDailyStep, CloudSportRecord, CloudBodyRecord, CloudCoinHistory, CloudSignRecord } from '../cloud/CloudDBModels';
 import { AppState, UserProfile, StepSnapshot, CoinHistoryItem, SignRecord } from '../models/AppModels';
 
 export class UserDataSyncService {
   private static instance: UserDataSyncService;
-  private authService = HuaweiAuthService.getInstance();
   private cloudDB = CloudDBService.getInstance();
 
   private constructor() {}
@@ -25,15 +23,15 @@ export class UserDataSyncService {
   /**
    * 用户首次登录，创建云端用户数据
    */
-  async onFirstLogin(huaweiUser: HuaweiUserInfo): Promise<CloudUser> {
+  async onFirstLogin(unionId: string, nickname: string, avatar?: string): Promise<CloudUser> {
     console.info('[UserDataSyncService] 首次登录，创建用户数据...');
     
     try {
       // 创建云端用户
       const cloudUser = await this.cloudDB.createNewUser(
-        huaweiUser.unionID,
-        huaweiUser.displayName,
-        huaweiUser.avatarUri
+        unionId,
+        nickname,
+        avatar
       );
 
       console.info('[UserDataSyncService] 用户数据创建成功:', cloudUser.userId);

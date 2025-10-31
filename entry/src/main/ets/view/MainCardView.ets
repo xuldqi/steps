@@ -15,6 +15,10 @@ interface BusinessError {
 export interface MainCardData {
   item:number,
   index: number,
+  subtitle?: string,
+  value?: string,
+  prevTitle?: string,
+  prevValue?: string,
 }
 //计算器计算按钮
 @Component
@@ -28,17 +32,19 @@ export struct MainCardView {
   @State mainCardIconH: string = '40%'//卡片内部图片高度
 
   build() {
-    Stack(){
-      Column(){
+    Stack() {
+      Column() {
         Text(Utils.getMainCardStr(this.formData.item)).fontColor('#000000').fontSize(17)
-        Text(appDataManager.getMainCardSubStr(this.formData.item)).fontColor('#ff8f8f8f').fontSize(13).margin({top:5})
-        Text(appDataManager.getMainCardSubData(this.formData.item)).fontColor('#000000').
-        fontSize(appDataManager.getMainCardSubDataSize(this.formData.item)).margin({top:5})
+        Text(this.formData.subtitle ?? appDataManager.getMainCardSubStr(this.formData.item))
+          .fontColor('#ff8f8f8f').fontSize(13).margin({top:5})
+        Text(this.formData.value ?? appDataManager.getMainCardSubData(this.formData.item)).fontColor('#000000')
+          .fontSize(appDataManager.getMainCardSubDataSize(this.formData.item)).margin({top:5})
           .fontWeight(appDataManager.getMainCardSubDataWeight(this.formData.item))
         Column().layoutWeight(1)
-        if(appDataManager.hasMainCardLastData(this.formData.item)){
-          Text(appDataManager.getMainCardLastTitle(this.formData.item)).fontColor('#ff8f8f8f').fontSize(13)
-          Text(appDataManager.getMainCardLastData(this.formData.item)).fontColor('#ff8f8f8f').fontSize(16).margin({top:5}).fontWeight(500)
+        if ((this.formData.prevTitle ?? appDataManager.getMainCardLastTitle(this.formData.item)) !== '' &&
+          (this.formData.prevValue ?? appDataManager.getMainCardLastData(this.formData.item)) !== '') {
+          Text(this.formData.prevTitle ?? appDataManager.getMainCardLastTitle(this.formData.item)).fontColor('#ff8f8f8f').fontSize(13)
+          Text(this.formData.prevValue ?? appDataManager.getMainCardLastData(this.formData.item)).fontColor('#ff8f8f8f').fontSize(16).margin({top:5}).fontWeight(500)
         }
       }.width('100%').height('100%').alignItems(HorizontalAlign.Start).padding(10)
       Image(Utils.getMainCardIcon(this.formData.item)).width(this.mainCardIconH).height(this.mainCardIconH).borderRadius({bottomRight:15})

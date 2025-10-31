@@ -219,10 +219,11 @@ struct SportCalendarPage {
 
                   if (day.sportCount > 0) {
                     Row() {
-                      ForEach(day.sportTypes.slice(0, 3), (type: number) => {
-                        Circle({ width: 4, height: 4 })
-                          .fill('#0cc291')
-                          .margin({ right: 1 })
+                      ForEach(day.sportTypes.slice(0, 3), (_type: number) => {
+                        Text('•')
+                          .fontSize(10)
+                          .fontColor('#0cc291')
+                          .margin({ right: 2 })
                       })
                     }
                     .margin({ top: 2 })

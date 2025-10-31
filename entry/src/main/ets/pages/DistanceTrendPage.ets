@@ -10,22 +10,25 @@ import preferencesUtil from '../tools/DataPreUtils'
 import targetManager, { TargetValue } from '../tools/TargetManager'
 import StepData from '../appdata/StepData'
 
+// 步数转换为距离的系数：0.6米/步
+const STEPS_TO_DISTANCE_RATIO = 0.6
+
 @Entry
 @Component
-struct StepTrendPage {
+struct DistanceTrendPage {
   @State curOffset: number = 0
   @State top_week: string = ''
   @State reward_str: string = ''
-  @State allSteps: number = 0
-  @State argSteps: number = 0
-  @State targetSteps: number = 5000
-  @State currentSteps: number = 0
+  @State allDistance: number = 0 // 总距离（米）
+  @State argDistance: number = 0 // 平均每日距离（米）
+  @State targetDistance: number = 3000 // 目标距离（米）
+  @State currentDistance: number = 0 // 今日距离（米）
   @State viewMode: 'week' | 'month' | 'year' = 'week'
   @State windowEndDate: Date = new Date()
   private dates: Array<string> = new Array<string>()
   
   @State seriesRadiusOption: Options = new Options({
-    title: { show: true, text: '最近七天的步数统计', right: 20, top: 30 },
+    title: { show: true, text: '最近七天的距离统计', right: 20, top: 30 },
     xAxis: { data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日']},
     legend: { show: false },
     series: [{ name: '', barStyle: { 
@@ -41,7 +44,7 @@ struct StepTrendPage {
   private stepCallback: DataCallback<PerStepModel> = {
     onDataResult: (type: number, result: PerStepModel[], isReturnFirstData: boolean): void => {
       this.stepChartData = result
-      this.calculateStepStats()
+      this.calculateDistanceStats()
     }
   }
 
@@ -57,7 +60,7 @@ struct StepTrendPage {
       if (this.pendingMonthCount === 0) {
         // 标签形如 2025-10，转为 10月
         const x = this.monthLabels.map(m => m.split('-')[1] + '月')
-        const y = this.monthTotals
+        const y = this.monthTotals.map(s => s * STEPS_TO_DISTANCE_RATIO / 1000) // 转换为公里
         this.seriesRadiusOption.setVal({
           legend: { show: false },
           xAxis: { data: x },
@@ -67,44 +70,54 @@ struct StepTrendPage {
     }
   }
 
-  private calculateStepStats() {
-    const stepsByDate: Map<string, number> = new Map()
+  private calculateDistanceStats() {
+    const distanceByDate: Map<string, number> = new Map()
     for (const item of this.stepChartData) {
-      stepsByDate.set(item.date, Math.max(0, item.steps))
+      const distance = item.steps * STEPS_TO_DISTANCE_RATIO // 转换为米
+      distanceByDate.set(item.date, Math.max(0, distance))
     }
 
-    this.allSteps = 0
+    const today = DateUtils.getYMD()
+    const todaySteps = StepData.getCurrentSteps()
+    const todayDistance = todaySteps * STEPS_TO_DISTANCE_RATIO
+    if (todayDistance > 0 && this.dates.indexOf(today) >= 0) {
+      distanceByDate.set(today, todayDistance)
+    }
+
+    this.allDistance = 0
     let rewardDays = 0
     const totalDays = this.dates.length > 0 ? this.dates.length : Math.max(1, this.stepChartData.length)
 
     for (const date of this.dates) {
-      const steps = stepsByDate.get(date) ?? 0
-      this.allSteps = this.allSteps + steps
-      if (steps >= this.targetSteps) {
+      const distance = distanceByDate.get(date) ?? 0
+      this.allDistance = this.allDistance + distance
+      if (distance >= this.targetDistance) {
         rewardDays = rewardDays + 1
       }
     }
-    this.argSteps = this.allSteps / totalDays
+    this.argDistance = this.allDistance / totalDays
 
-    // 目标进度显示今日步数，从StepData实时获取
-    this.currentSteps = StepData.getCurrentSteps()
+    // 目标进度显示今日距离
+    this.currentDistance = todayDistance
+    Log.i(`calculateDistanceStats: targetDistance=${this.targetDistance}米, currentDistance=${this.currentDistance}米`)
 
     if (this.viewMode === 'year') {
       this.reward_str = ''
     } else {
       if (rewardDays > 0) {
-        this.reward_str = (this.viewMode === 'week' ? '本周' : '近30天') + '步数达标天数' + rewardDays + '天'
+        this.reward_str = (this.viewMode === 'week' ? '本周' : '近30天') + '距离达标天数' + rewardDays + '天'
       } else {
-        this.reward_str = (this.viewMode === 'week' ? '最近一周' : '近30天') + '没有一天步数达标哦！'
+        this.reward_str = (this.viewMode === 'week' ? '最近一周' : '近30天') + '没有一天距离达标哦！'
       }
     }
     
     let mm_datas = new Array<number>()
     let mm_dates = new Array<string>()
     
-    // 构造图表数据：每一天都展示，未同步的数据置零
+    // 构造图表数据：每一天都展示，未同步的数据置零（单位为公里）
     for (let i = 0; i < this.dates.length; i++) {
-      const steps = stepsByDate.get(this.dates[i]) ?? 0
+      const distance = distanceByDate.get(this.dates[i]) ?? 0
+      const distanceKm = distance / 1000 // 转换为公里用于图表显示
       if (this.viewMode === 'week') {
         const d = this.parseDateFromYMD(this.dates[i])
         const jsDay = d.getDay()
@@ -117,7 +130,7 @@ struct StepTrendPage {
         const month = (d.getMonth() + 1).toString()
         mm_dates.push(month)
       }
-      mm_datas.push(steps)
+      mm_datas.push(distanceKm)
     }
     this.seriesRadiusOption.setVal({
       legend: { show: false },
@@ -129,9 +142,10 @@ struct StepTrendPage {
     })
   }
 
-  onPageShow(): void {
-    Log.i('StepTrendPage onPageShow called')
-    this.loadTargetSteps()
+  async onPageShow(): Promise<void> {
+    Log.i('DistanceTrendPage onPageShow called')
+    await this.loadTargetDistance()
+    Log.i(`DistanceTrendPage loaded target: ${this.targetDistance}米`)
     // 订阅目标变更，保持目标与页面同步
     targetManager.addListener(this.onTargetsChanged)
     this.windowEndDate = new Date()
@@ -144,22 +158,23 @@ struct StepTrendPage {
   }
 
   private onTargetsChanged = (targets: TargetValue) => {
-    const newTarget = targets.step_target
-    if (this.targetSteps !== newTarget) {
-      this.targetSteps = newTarget
-      this.calculateStepStats()
+    const newTarget = targets.distance_target
+    if (this.targetDistance !== newTarget) {
+      this.targetDistance = newTarget
+      this.calculateDistanceStats()
     }
   }
 
-  private async loadTargetSteps() {
+  private async loadTargetDistance() {
     await targetManager.loadTargets()
-    this.targetSteps = targetManager.getTarget('step_target')
+    this.targetDistance = targetManager.getTarget('distance_target')
+    Log.i(`loadTargetDistance: loaded ${this.targetDistance}米`)
   }
 
   async onTargetModified(newValue: number) {
-    await targetManager.updateTarget('step_target', newValue)
-    this.targetSteps = newValue
-    this.calculateStepStats()
+    await targetManager.updateTarget('distance_target', newValue)
+    this.targetDistance = newValue
+    this.calculateDistanceStats()
   }
 
   private formatYMD(d: Date): string {
@@ -239,7 +254,7 @@ struct StepTrendPage {
             // 保证与 this.dates 顺序一致
             results.sort((a, b) => a.date.localeCompare(b.date))
             this.stepChartData = results
-            this.calculateStepStats()
+            this.calculateDistanceStats()
           }
         }
       })
@@ -290,7 +305,7 @@ struct StepTrendPage {
           if (pending === 0) {
             results.sort((a, b) => a.date.localeCompare(b.date))
             this.stepChartData = results
-            this.calculateStepStats()
+            this.calculateDistanceStats()
           }
         }
       })
@@ -299,13 +314,13 @@ struct StepTrendPage {
 
   private loadByViewMode() {
     if (this.viewMode === 'week') {
-      this.seriesRadiusOption.setVal({ title: { text: '步数' } })
+      this.seriesRadiusOption.setVal({ title: { text: '距离' } })
       this.loadWeekWindow()
     } else if (this.viewMode === 'month') {
-      this.seriesRadiusOption.setVal({ title: { text: '步数' } })
+      this.seriesRadiusOption.setVal({ title: { text: '距离' } })
       this.loadDailyWindow(30)
     } else {
-      this.seriesRadiusOption.setVal({ title: { text: '步数' } })
+      this.seriesRadiusOption.setVal({ title: { text: '距离' } })
       this.showYearRecord()
       // 顶部区间显示
       const end = new Date(this.windowEndDate)
@@ -315,7 +330,7 @@ struct StepTrendPage {
   }
 
   private showMonthRecord(): void {
-    // 最近6个月总步数（暂未在新交互中使用，保留）
+    // 最近6个月总距离（暂未在新交互中使用，保留）
     this.monthTotals = []
     this.monthLabels = []
     const months: Array<string> = [] as Array<string> // 形如 2025-10
@@ -333,7 +348,7 @@ struct StepTrendPage {
   }
 
   private showYearRecord(): void {
-    // 近12个月自然月总步数
+    // 近12个月自然月总距离
     const end = new Date(this.windowEndDate.getFullYear(), this.windowEndDate.getMonth(), 1)
     const labels: Array<string> = []
     const totals: Array<number> = []
@@ -343,13 +358,13 @@ struct StepTrendPage {
       const y = d.getFullYear()
       const m = (d.getMonth() + 1).toString().padStart(2, '0')
       months.push(`${y}-${m}`)
-      labels.push(`${parseInt(m)}`) // 不显示单位“月”
+      labels.push(`${parseInt(m)}`) // 不显示单位"月"
     }
     let pending = months.length
     months.forEach((mm: string, idx: number) => {
       appDataManager.getStepPerMonth(mm, {
         onResult: (sum: number) => {
-          totals[idx] = sum
+          totals[idx] = sum * STEPS_TO_DISTANCE_RATIO / 1000 // 转换为公里
           pending--
           if (pending === 0) {
             const finalTotals = totals.map((value: number | undefined) => value ?? 0)
@@ -367,7 +382,7 @@ struct StepTrendPage {
 
   build() {
     Column() {
-      CommonTitleView({data1:{str1:'步数'},cancel:()=>{
+      CommonTitleView({data1:{str1:'走路距离'},cancel:()=>{
           router.back()
       }})
       Scroll(){
@@ -383,7 +398,7 @@ struct StepTrendPage {
                 .height(32).padding({ left:12, right:12 }).borderRadius(16)
                 .opacity(this.viewMode === 'week' ? 1 : 0.8)
                 .onClick(()=>{ 
-                  console.info('[StepTrendPage] 点击视图模式: week')
+                  console.info('[DistanceTrendPage] 点击视图模式: week')
                   this.viewMode='week'; 
                   this.windowEndDate = new Date(); 
                   this.loadByViewMode() 
@@ -395,7 +410,7 @@ struct StepTrendPage {
                 .height(32).padding({ left:12, right:12 }).borderRadius(16).margin({ left:8 })
                 .opacity(this.viewMode === 'month' ? 1 : 0.8)
                 .onClick(()=>{ 
-                  console.info('[StepTrendPage] 点击视图模式: month')
+                  console.info('[DistanceTrendPage] 点击视图模式: month')
                   this.viewMode='month'; 
                   this.windowEndDate = new Date(); 
                   this.loadByViewMode() 
@@ -407,7 +422,7 @@ struct StepTrendPage {
                 .height(32).padding({ left:12, right:12 }).borderRadius(16).margin({ left:8 })
                 .opacity(this.viewMode === 'year' ? 1 : 0.8)
                 .onClick(()=>{ 
-                  console.info('[StepTrendPage] 点击视图模式: year')
+                  console.info('[DistanceTrendPage] 点击视图模式: year')
                   this.viewMode='year'; 
                   this.windowEndDate = new Date(); 
                   this.loadByViewMode() 
@@ -467,10 +482,10 @@ struct StepTrendPage {
           // 目标进度 - 白色卡片容器
           Column(){
             TargetProgressView({
-              targetName: '步数',
-              currentValue: this.currentSteps,
-              targetValue: this.targetSteps,
-              unit: '步'
+              targetName: '距离',
+              currentValue: this.currentDistance,
+              targetValue: this.targetDistance,
+              unit: '米'
             })
           }
           .width('92%')
@@ -483,14 +498,14 @@ struct StepTrendPage {
           Column(){
             Row(){
               Column(){
-                Text('总步数').fontSize(12).fontColor('#666666')
-                Text(this.allSteps.toString()).fontWeight(600).fontSize(30).margin({ top: 6 })
-                Text('步').fontSize(12).fontColor('#666666')
+                Text('总距离').fontSize(12).fontColor('#666666')
+                Text((this.allDistance / 1000).toFixed(2)).fontWeight(600).fontSize(30).margin({ top: 6 })
+                Text('公里').fontSize(12).fontColor('#666666')
               }.layoutWeight(1)
               Column(){
-                Text('平均每日步数').fontSize(12).fontColor('#666666')
-                Text(this.argSteps.toFixed(0)).fontWeight(600).fontSize(30).margin({ top: 6 })
-                Text('步').fontSize(12).fontColor('#666666')
+                Text('平均每日距离').fontSize(12).fontColor('#666666')
+                Text((this.argDistance / 1000).toFixed(2)).fontWeight(600).fontSize(30).margin({ top: 6 })
+                Text('公里').fontSize(12).fontColor('#666666')
               }.layoutWeight(1)
             }
           }

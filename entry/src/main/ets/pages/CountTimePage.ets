@@ -4,6 +4,7 @@ import { systemDateTime } from '@kit.BasicServicesKit';
 import { CommonDialog } from '../view/CommonDialog';
 import { Utils } from '../tools/Utils';
 import { DateUtils } from '../tools/DateUtils';
+import { CommonTitleView } from '../view/CommonTitleView';
 
 
 @Entry
@@ -280,163 +281,241 @@ struct CountTimePage {
   }
 
   build() {
-    Stack() {
+    Column() {
+      CommonTitleView({
+        data1: { str1: '计时器' },
+        cancel: () => {
+          router.back()
+        }
+      })
+
       Tabs({ barPosition: BarPosition.Start, controller: this.controller }) {
-        TabContent() {// 第一个tab页面 start
-          Column(){
+        TabContent() { // 第一个tab页面 start
+          Scroll() {
+            Column() {
+              Text(this.countTime)
+                .fontWeight(700)
+                .fontSize(64)
+                .fontColor('#000000')
+                .margin({ bottom: 30, top: 30 })
 
+              if (!this.isStartCount) {
+                Column() {
+                  Image($r('app.media.start'))
+                    .height(this.iconSize)
+                    .width(this.iconSize)
+                    .onClick(() => {
+                      if (this.isCountDownStart) {
+                        Utils.showToast('倒计时已经开始')
+                        return
+                      }
+                      this.isStartCount = true
+                      this.isCountPause = false
+                      Utils.showToast('计时器开始')
+                      this.startCountTime()
+                    })
+                  Text('开始').fontSize(14).fontColor('#666').margin({ top: 8 })
+                }
+              }
 
-            Text(this.countTime).fontWeight(700).fontSize(64).fontColor('#000000').margin({bottom:30,top:50})
-            
-            // 未开始状态：只显示"开始"按钮
-            if (!this.isStartCount) {
-              Column(){
-                Image($r('app.media.start')).height(this.iconSize).width(this.iconSize).onClick(() => {
-                  if(this.isCountDownStart){
-                    Utils.showToast('倒计时已经开始')
-                    return
+              if (this.isStartCount && !this.isCountPause) {
+                Row() {
+                  Column() {
+                    Image($r('app.media.da_biao'))
+                      .height(this.iconSize)
+                      .width(this.iconSize)
+                      .onClick(() => {
+                        this.daBiaoAction()
+                      })
+                    Text('标记').fontSize(14).fontColor('#666').margin({ top: 8 })
                   }
-                  this.isStartCount = true
-                  this.isCountPause = false
-                  Utils.showToast('计时器开始')
-                  this.startCountTime()
-                })
-                Text('开始').fontSize(14).fontColor('#666').margin({top:8})
-              }
-            }
-            
-            // 运行中状态：显示"标记"和"暂停"按钮
-            if (this.isStartCount && !this.isCountPause) {
-              Row(){
-                Column(){
-                  Image($r('app.media.da_biao')).height(this.iconSize).width(this.iconSize).onClick(() => {
-                    this.daBiaoAction()
-                  })
-                  Text('标记').fontSize(14).fontColor('#666').margin({top:8})
-                }.margin({left:30,right:30})
+                  .margin({ left: 30, right: 30 })
 
-                Column(){
-                  Image($r('app.media.pause')).height(this.iconSize).width(this.iconSize).onClick(() => {
-                    this.isCountPause = true
-                    this.lastCountTimePauseStamp = systemDateTime.getTime()
-                  })
-                  Text('暂停').fontSize(14).fontColor('#666').margin({top:8})
-                }.margin({left:30,right:30})
+                  Column() {
+                    Image($r('app.media.pause'))
+                      .height(this.iconSize)
+                      .width(this.iconSize)
+                      .onClick(() => {
+                        this.isCountPause = true
+                        this.lastCountTimePauseStamp = systemDateTime.getTime()
+                      })
+                    Text('暂停').fontSize(14).fontColor('#666').margin({ top: 8 })
+                  }
+                  .margin({ left: 30, right: 30 })
+                }
               }
-            }
-            
-            // 暂停状态：显示"继续"和"停止"按钮
-            if (this.isStartCount && this.isCountPause) {
-              Row(){
-                Column(){
-                  Image($r('app.media.contiue')).height(this.iconSize).width(this.iconSize).onClick(() => {
-                    this.isCountPause = false
-                    //总的暂停时间等于上次的暂停时间加上当前开始时间减去上次暂停的时间戳
-                    this.startCountTimeAllPauseStamp = this.startCountTimeAllPauseStamp+systemDateTime.getTime() - this.lastCountTimePauseStamp
-                  })
-                  Text('继续').fontSize(14).fontColor('#666').margin({top:8})
-                }.margin({left:30,right:30})
 
-                Column(){
-                  Image($r('app.media.stop')).height(this.iconSize).width(this.iconSize).onClick(() => {
-                    this.stopCountTime()
+              if (this.isStartCount && this.isCountPause) {
+                Row() {
+                  Column() {
+                    Image($r('app.media.contiue'))
+                      .height(this.iconSize)
+                      .width(this.iconSize)
+                      .onClick(() => {
+                        this.isCountPause = false
+                        this.startCountTimeAllPauseStamp = this.startCountTimeAllPauseStamp + systemDateTime.getTime() - this.lastCountTimePauseStamp
+                      })
+                    Text('继续').fontSize(14).fontColor('#666').margin({ top: 8 })
+                  }
+                  .margin({ left: 30, right: 30 })
+
+                  Column() {
+                    Image($r('app.media.stop'))
+                      .height(this.iconSize)
+                      .width(this.iconSize)
+                      .onClick(() => {
+                        this.stopCountTime()
+                      })
+                    Text('停止').fontSize(14).fontColor('#666').margin({ top: 8 })
+                  }
+                  .margin({ left: 30, right: 30 })
+                }
+              }
+
+              if (this.daBiaos.length > 0) {
+                List() {
+                  ForEach(this.daBiaos, (item: string, index: number) => {
+                    ListItem() {
+                      Text(item)
+                        .fontSize(14)
+                        .fontColor('#ff4c4c4c')
+                        .width('100%')
+                        .textAlign(TextAlign.Center)
+                    }
+                    .padding({ left: 10, right: 10, top: 10, bottom: 6 })
                   })
-                  Text('停止').fontSize(14).fontColor('#666').margin({top:8})
-                }.margin({left:30,right:30})
+                }
+                .listDirection(Axis.Vertical)
+                .alignListItem(ListItemAlign.Start)
+                .margin({ top: 30, bottom: 10 })
+                .width('88%')
               }
             }
-            
-            // 标记列表：只在有记录时显示
-            if (this.daBiaos.length > 0) {
-              List(){
-                ForEach(this.daBiaos, (item: string, index: number) => {
-                  ListItem() {
-                    Text(item).fontSize(14).fontColor('#ff4c4c4c').width('100%').textAlign(TextAlign.Center)
-                  }.padding({left:10,right:10,top:10,bottom:6})
-                })
-              }.listDirection(Axis.Vertical).alignListItem(ListItemAlign.Start).margin({top:30,bottom:10}).height('35%').width('88%')
-            }
-          }.alignItems(HorizontalAlign.Center)
-        }.tabBar(this.tabBuilder(0,'秒表计时')) //Tab1 按钮
-        // 第一个tab页面 end
+            .alignItems(HorizontalAlign.Center)
+            .width('100%')
+            .padding({ bottom: 32 })
+          }
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#FFFFFF')
+        }.tabBar(this.tabBuilder(0, '秒表计时')) //Tab1 按钮
+
         TabContent() {
-          Column(){
-            Row(){
-              TextPicker({ range: this.hours, selected: this.countDownHourIndex })
-                .onChange((value: string | string[], index: number | number[]) => {
+          Scroll() {
+            Column() {
+              Row() {
+                TextPicker({ range: this.hours, selected: this.countDownHourIndex })
+                  .onChange((value: string | string[], index: number | number[]) => {
                     Log.i('TextPicker 1 ' + JSON.stringify(value) + ', ' + 'index: ' + JSON.stringify(index))
                     this.countDownHourIndex = Number(index)
-                }).divider(null).width('20%')
-                .disappearTextStyle({color: Color.Gray, font: {size: 13, weight: FontWeight.Lighter}})
-                .textStyle({color: Color.Gray, font: {size: 15, weight: FontWeight.Normal}})
-                .selectedTextStyle({color: Color.Black, font: {size: 25, weight: FontWeight.Bolder}})
-              Text('时').fontSize(18).fontWeight(600)
-              TextPicker({ range: this.minus,selected: this.countDownMinIndex })
-                .onChange((value: string | string[], index: number | number[]) => {
-                  Log.i('TextPicker 2:onChange ' + JSON.stringify(value) + ', ' + 'index: ' + JSON.stringify(index))
-                  this.countDownMinIndex = Number(index)
-                }).divider(null).width('20%')
-                .disappearTextStyle({color: Color.Gray, font: {size: 13, weight: FontWeight.Lighter}})
-                .textStyle({color: Color.Gray, font: {size: 15, weight: FontWeight.Normal}})
-                .selectedTextStyle({color: Color.Black, font: {size: 25, weight: FontWeight.Bolder}})
-              Text('分').fontSize(18).fontWeight(600)
-              TextPicker({ range: this.seconds, selected: this.countDownSecIndex })
-                .onChange((value: string | string[], index: number | number[]) => {
-                  Log.i('TextPicker 3 ' + JSON.stringify(value) + ', ' + 'index: ' + JSON.stringify(index))
-                  this.countDownSecIndex = Number(index)
-                }).divider(null).width('20%')
-                .disappearTextStyle({color: Color.Grey, font: {size: 13, weight: FontWeight.Lighter}})
-                .textStyle({color: Color.Grey, font: {size: 15, weight: FontWeight.Normal}})
-                .selectedTextStyle({color: Color.Black, font: {size: 30, weight: FontWeight.Medium}})
-              Text('秒').fontSize(18).fontWeight(600)
-            }.visibility(!this.isCountDownStart?Visibility.Visible:Visibility.None)
+                  })
+                  .divider(null)
+                  .width('20%')
+                  .disappearTextStyle({ color: Color.Gray, font: { size: 13, weight: FontWeight.Lighter } })
+                  .textStyle({ color: Color.Gray, font: { size: 15, weight: FontWeight.Normal } })
+                  .selectedTextStyle({ color: Color.Black, font: { size: 25, weight: FontWeight.Bolder } })
+                Text('时').fontSize(18).fontWeight(600)
+                TextPicker({ range: this.minus, selected: this.countDownMinIndex })
+                  .onChange((value: string | string[], index: number | number[]) => {
+                    Log.i('TextPicker 2:onChange ' + JSON.stringify(value) + ', ' + 'index: ' + JSON.stringify(index))
+                    this.countDownMinIndex = Number(index)
+                  })
+                  .divider(null)
+                  .width('20%')
+                  .disappearTextStyle({ color: Color.Gray, font: { size: 13, weight: FontWeight.Lighter } })
+                  .textStyle({ color: Color.Gray, font: { size: 15, weight: FontWeight.Normal } })
+                  .selectedTextStyle({ color: Color.Black, font: { size: 25, weight: FontWeight.Bolder } })
+                Text('分').fontSize(18).fontWeight(600)
+                TextPicker({ range: this.seconds, selected: this.countDownSecIndex })
+                  .onChange((value: string | string[], index: number | number[]) => {
+                    Log.i('TextPicker 3 ' + JSON.stringify(value) + ', ' + 'index: ' + JSON.stringify(index))
+                    this.countDownSecIndex = Number(index)
+                  })
+                  .divider(null)
+                  .width('20%')
+                  .disappearTextStyle({ color: Color.Grey, font: { size: 13, weight: FontWeight.Lighter } })
+                  .textStyle({ color: Color.Grey, font: { size: 15, weight: FontWeight.Normal } })
+                  .selectedTextStyle({ color: Color.Black, font: { size: 30, weight: FontWeight.Medium } })
+                Text('秒').fontSize(18).fontWeight(600)
+              }
+              .visibility(!this.isCountDownStart ? Visibility.Visible : Visibility.None)
 
-            Column(){
-              Text(this.countDownText).fontSize(64).fontWeight(700).fontColor('#000000')
-              Text(this.countDownHint).fontSize(16).fontWeight(400).fontColor('#ff666666').margin({top:10})
-            }.visibility(this.isCountDownStart?Visibility.Visible:Visibility.None).margin({bottom:30,top:50})
+              Column() {
+                Text(this.countDownText).fontSize(64).fontWeight(700).fontColor('#000000')
+                Text(this.countDownHint).fontSize(16).fontWeight(400).fontColor('#ff666666').margin({ top: 10 })
+              }
+              .visibility(this.isCountDownStart ? Visibility.Visible : Visibility.None)
+              .margin({ bottom: 30, top: 40 })
 
-            Row(){
-              Image($r('app.media.start')).height(this.iconSize).width(this.iconSize).onClick(() => {
-                if(this.isStartCount){
-                  Utils.showToast('计时器已经开始')
-                  return
-                }
-                this.isCountDownStart = true
-                this.isCountDownPause = false
-                Utils.showToast('倒计时开始')
-                this.startCountDown()
-
-              }).margin(30).visibility(!this.isCountDownStart?Visibility.Visible:Visibility.None)
-              Image($r('app.media.pause')).height(this.iconSize).width(this.iconSize).onClick(() => {
-                this.isCountDownPause = true
-              }).margin(30).visibility((this.isCountDownStart&&!this.isCountDownPause)?Visibility.Visible:Visibility.None)
-              Image($r('app.media.contiue')).height(this.iconSize).width(this.iconSize).onClick(() => {
-                this.isCountDownPause = false
-              }).margin(30).visibility((this.isCountDownStart&&this.isCountDownPause)?Visibility.Visible:Visibility.None)
-              Image($r('app.media.stop')).height(this.iconSize).width(this.iconSize).onClick(() => {
-                this.isCountDownStart = false
-                this.isCountDownPause = false
-                this.stopCountDown()
-              }).margin(30).visibility(this.isCountDownStart?Visibility.Visible:Visibility.None)
+              Row() {
+                Image($r('app.media.start'))
+                  .height(this.iconSize)
+                  .width(this.iconSize)
+                  .onClick(() => {
+                    if (this.isStartCount) {
+                      Utils.showToast('计时器已经开始')
+                      return
+                    }
+                    this.isCountDownStart = true
+                    this.isCountDownPause = false
+                    Utils.showToast('倒计时开始')
+                    this.startCountDown()
+                  })
+                  .margin(30)
+                  .visibility(!this.isCountDownStart ? Visibility.Visible : Visibility.None)
+                Image($r('app.media.pause'))
+                  .height(this.iconSize)
+                  .width(this.iconSize)
+                  .onClick(() => {
+                    this.isCountDownPause = true
+                  })
+                  .margin(30)
+                  .visibility((this.isCountDownStart && !this.isCountDownPause) ? Visibility.Visible : Visibility.None)
+                Image($r('app.media.contiue'))
+                  .height(this.iconSize)
+                  .width(this.iconSize)
+                  .onClick(() => {
+                    this.isCountDownPause = false
+                  })
+                  .margin(30)
+                  .visibility((this.isCountDownStart && this.isCountDownPause) ? Visibility.Visible : Visibility.None)
+                Image($r('app.media.stop'))
+                  .height(this.iconSize)
+                  .width(this.iconSize)
+                  .onClick(() => {
+                    this.isCountDownStart = false
+                    this.isCountDownPause = false
+                    this.stopCountDown()
+                  })
+                  .margin(30)
+                  .visibility(this.isCountDownStart ? Visibility.Visible : Visibility.None)
+              }
             }
+            .alignItems(HorizontalAlign.Center)
+            .width('100%')
+            .padding({ top: 24, bottom: 32 })
           }
-        }.tabBar(this.tabBuilder(1,'倒计时')) //Tab2 按钮
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#FFFFFF')
+        }.tabBar(this.tabBuilder(1, '倒计时')) //Tab2 按钮
       }
-      .vertical(false).onTabBarClick((index: number) => {
+      .vertical(false)
+      .onTabBarClick((index: number) => {
         this.controller.changeIndex(index)
       })
-      .barHeight('7%').barWidth('50%').scrollable(true)
+      .barHeight('7%')
+      .barWidth('50%')
+      .scrollable(true)
       .onChange((index: number) => {
         this.currentIndex = index
       })
-      .width('100%').height('100%')
-      .backgroundColor(this.tabColor)
-
-      Image($r('app.media.back_btn_dark')).height(27).width(27).onClick(() => {
-        router.back();
-      }).alignSelf(ItemAlign.Start).margin(10)
-    }.width('100%').height('100%').align(Alignment.TopStart)
+      .backgroundColor('#FFFFFF')
+      .layoutWeight(1)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('#FFFFFF')
   }
 
 

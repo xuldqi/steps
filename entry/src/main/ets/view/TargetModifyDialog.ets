@@ -122,14 +122,18 @@ export struct TargetModifyDialog {
 // 目标进度组件
 @Component
 export struct TargetProgressView {
-  @State targetName: string = ''
-  @State currentValue: number = 0
-  @State targetValue: number = 0
-  @State unit: string = ''
+  @Prop targetName: string = ''
+  @Prop currentValue: number = 0
+  @Prop targetValue: number = 0
+  @Prop unit: string = ''
 
   private getProgressPercentage(): number {
     if (this.targetValue <= 0) return 0
-    return Math.min((this.currentValue / this.targetValue) * 100, 100)
+    const raw = (this.currentValue / this.targetValue) * 100
+    if (raw <= 0) {
+      return 0
+    }
+    return Math.min(raw, 100)
   }
 
   private getProgressColor(): string {
@@ -142,6 +146,15 @@ export struct TargetProgressView {
   private openModifyDialog() {
     // 跳转到目标管理页面
     router.pushUrl({ url: 'pages/TargetManagementPage' })
+  }
+
+  private formatDisplayNumber(value: number): string {
+    const rounded = Math.round(value * 100) / 100
+    let text = rounded.toFixed(2)
+    if (text.indexOf('.') >= 0) {
+      text = text.replace(/0+$/, '').replace(/\.$/, '')
+    }
+    return text
   }
 
   build() {
@@ -168,25 +181,23 @@ export struct TargetProgressView {
       .width('100%')
       .margin({ bottom: 12 })
 
-      Text(`${this.currentValue}/${this.targetValue}${this.unit}`)
+      Text(`${this.formatDisplayNumber(this.currentValue)}/${this.formatDisplayNumber(this.targetValue)}${this.unit}`)
         .fontSize(14)
         .fontColor('#666666')
         .margin({ bottom: 8 })
 
-      Stack() {
-        Row()
-          .backgroundColor('#F0F0F0')
-          .height(8)
-          .borderRadius(4)
-          .width('100%')
-
+      Row() {
         Row()
           .backgroundColor(this.getProgressColor())
-          .height(8)
+          .height('100%')
           .borderRadius(4)
           .width(`${this.getProgressPercentage()}%`)
       }
       .width('100%')
+      .height(8)
+      .backgroundColor('#F0F0F0')
+      .borderRadius(4)
+      .clip(true)
     }
     .width('100%')
     .padding(16)

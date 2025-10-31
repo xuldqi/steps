@@ -3,10 +3,12 @@
  * 统一管理用户登录状态、数据同步、云存储
  * 适配StepSportszc项目
  */
-import { AppState, CoinHistoryItem, SignRecord, StepSnapshot, TaskReward, UserProfile } from '../models/AppModels';
-import { HuaweiAuthService } from './HuaweiAuthService';
+import { AppState, CoinHistoryItem, StepSnapshot, UserProfile } from '../models/AppModels';
 import { UserDataSyncService } from './UserDataSyncService';
 import { CloudDBService } from './CloudDBService';
+import preferencesUtil from '../tools/DataPreUtils';
+
+const LAST_UNION_ID_KEY = 'last_union_id';
 
 type Listener = (state: AppState) => void;
 
@@ -34,12 +36,11 @@ export class AppStateStore {
   private static instance: AppStateStore;
   private state: AppState = buildDefaultState();
   private listeners: Set<Listener> = new Set();
-  
-  private authService = HuaweiAuthService.getInstance();
   private syncService = UserDataSyncService.getInstance();
   private cloudDB = CloudDBService.getInstance();
-  
+
   private isLoggedIn: boolean = false;
+  private cachedUnionId: string | null = null;
 
   static getInstance(): AppStateStore {
     if (!AppStateStore.instance) {
@@ -73,43 +74,43 @@ export class AppStateStore {
    * 获取当前用户ID
    */
   getUserId(): string | null {
-    return this.state.user?.id || null;
+    return this.state.user?.id || this.cachedUnionId;
   }
 
   /**
-   * 用户登录
+   * 使用 unionId 登录
    */
-  async login(): Promise<void> {
-    try {
-      // 执行华为账号登录
-      const huaweiUser = await this.authService.login();
-      
-      if (!huaweiUser || !huaweiUser.unionID) {
-        throw new Error('登录失败');
-      }
-
-      // 检查云端是否存在用户数据
-      let cloudUser = await this.cloudDB.getUser(huaweiUser.unionID);
-      
-      if (!cloudUser) {
-        // 首次登录，创建用户数据
-        console.info('[AppStateStore] 首次登录，创建用户数据');
-        cloudUser = await this.syncService.onFirstLogin(huaweiUser);
-      }
-
-      // 从云端加载完整的用户数据
-      const appState = await this.syncService.loadUserData(huaweiUser.unionID);
-      
-      // 更新本地状态
-      this.state = appState;
-      this.isLoggedIn = true;
-      this.emit();
-
-      console.info('[AppStateStore] 用户登录成功:', huaweiUser.displayName);
-    } catch (error) {
-      console.error('[AppStateStore] 登录失败:', JSON.stringify(error));
-      throw error;
+  async loginWithUnionId(unionId: string, options?: { nickname?: string; avatar?: string }): Promise<void> {
+    if (!unionId) {
+      throw new Error('unionId 不能为空');
     }
+
+    const displayName = options?.nickname ?? '运动达人';
+    const avatar = options?.avatar ?? '';
+
+    // 写入本地缓存，便于下次自动登录
+    try {
+      await preferencesUtil.putPreferenceValue('steps_ohos', LAST_UNION_ID_KEY, unionId);
+    } catch (error) {
+      console.warn('[AppStateStore] 缓存登录信息失败:', JSON.stringify(error));
+    }
+
+    this.cachedUnionId = unionId;
+
+    // 若云端不存在用户，则创建默认数据
+    let cloudUser = await this.cloudDB.getUser(unionId);
+    if (!cloudUser) {
+      console.info('[AppStateStore] 首次登录，创建云端用户');
+      cloudUser = await this.syncService.onFirstLogin(unionId, displayName, avatar);
+    }
+
+    // 拉取云端完整数据
+    const appState = await this.syncService.loadUserData(unionId);
+    this.state = appState;
+    this.isLoggedIn = true;
+    this.emit();
+
+    console.info('[AppStateStore] 用户登录成功:', displayName);
   }
 
   /**
@@ -117,21 +118,15 @@ export class AppStateStore {
    */
   async autoLogin(): Promise<boolean> {
     try {
-      // 尝试静默登录
-      const huaweiUser = await this.authService.silentLogin();
-      
-      if (!huaweiUser || !huaweiUser.unionID) {
+      const unionId = await preferencesUtil.getPreferenceValue('steps_ohos', LAST_UNION_ID_KEY, '') as string;
+      if (!unionId) {
         return false;
       }
-
-      // 从云端加载用户数据
-      const appState = await this.syncService.loadUserData(huaweiUser.unionID);
-      
-      // 更新本地状态
+      const appState = await this.syncService.loadUserData(unionId);
       this.state = appState;
+      this.cachedUnionId = unionId;
       this.isLoggedIn = true;
       this.emit();
-
       console.info('[AppStateStore] 自动登录成功');
       return true;
     } catch (error) {
@@ -145,18 +140,17 @@ export class AppStateStore {
    */
   async logout(): Promise<void> {
     try {
-      await this.authService.logout();
-      
-      // 重置为默认状态
-      this.state = buildDefaultState();
-      this.isLoggedIn = false;
-      this.emit();
-
-      console.info('[AppStateStore] 用户已登出');
+      await preferencesUtil.deletePreferenceValue('steps_ohos', LAST_UNION_ID_KEY, '');
     } catch (error) {
-      console.error('[AppStateStore] 登出失败:', JSON.stringify(error));
-      throw error;
+      console.warn('[AppStateStore] 清理登录缓存失败:', JSON.stringify(error));
     }
+
+    this.cachedUnionId = null;
+    this.state = buildDefaultState();
+    this.isLoggedIn = false;
+    this.emit();
+
+    console.info('[AppStateStore] 用户已登出');
   }
 
   /**
@@ -219,12 +213,12 @@ export class AppStateStore {
     }
 
     try {
-      // 同步到云端
       await this.syncService.signIn(this.getUserId()!, reward);
 
-      // 更新本地状态
       const signRecords = this.state.signRecords.map((record) =>
-        record.date === date ? { ...record, completed: true, reward } : record
+        record.date === date
+          ? { ...record, completed: true, reward }
+          : record
       );
 
       const consecutiveSignDays = this.state.user.consecutiveSignDays + 1;
@@ -238,18 +232,19 @@ export class AppStateStore {
         totalCoins
       };
 
-      // 添加金币流水
-      const coinHistory = [{
-        id: `coin_${Date.now()}`,
-        title: '每日签到',
-        amount: reward,
-        type: 'income' as const,
-        createdAt: new Date().toISOString()
-      }, ...this.state.coinHistory];
+      const coinHistory = [
+        {
+          id: `coin_${Date.now()}`,
+          title: '每日签到',
+          amount: reward,
+          type: 'income' as const,
+          createdAt: new Date().toISOString()
+        },
+        ...this.state.coinHistory
+      ];
 
       this.state = { ...this.state, signRecords, user, coinHistory };
       this.emit();
-
       console.info('[AppStateStore] 签到成功，奖励:', reward);
     } catch (error) {
       console.error('[AppStateStore] 签到失败:', JSON.stringify(error));
@@ -273,6 +268,7 @@ export class AppStateStore {
         status: (isCompleted ? 'completed' : task.status) as any
       };
     });
+
     this.state = { ...this.state, tasks };
     this.emit();
   }
@@ -291,16 +287,11 @@ export class AppStateStore {
     }
 
     try {
-      // 同步到云端
       await this.syncService.claimTaskReward(this.getUserId()!, taskId, task.reward, task.title);
 
-      // 更新本地状态
-      const tasks = this.state.tasks.map((t) => {
-        if (t.id !== taskId) {
-          return t;
-        }
-        return { ...t, status: 'claimed' as const };
-      });
+      const tasks = this.state.tasks.map((t) =>
+        t.id === taskId ? { ...t, status: 'claimed' as const } : t
+      );
 
       const user = {
         ...this.state.user,
@@ -308,18 +299,19 @@ export class AppStateStore {
         totalCoins: this.state.user.totalCoins + task.reward
       };
 
-      // 添加金币流水
-      const coinHistory = [{
-        id: `coin_${Date.now()}`,
-        title: task.title,
-        amount: task.reward,
-        type: 'income' as const,
-        createdAt: new Date().toISOString()
-      }, ...this.state.coinHistory];
+      const coinHistory = [
+        {
+          id: `coin_${Date.now()}`,
+          title: task.title,
+          amount: task.reward,
+          type: 'income' as const,
+          createdAt: new Date().toISOString()
+        },
+        ...this.state.coinHistory
+      ];
 
       this.state = { ...this.state, tasks, user, coinHistory };
       this.emit();
-
       console.info('[AppStateStore] 任务奖励领取成功:', task.title, task.reward);
     } catch (error) {
       console.error('[AppStateStore] 领取任务奖励失败:', JSON.stringify(error));
@@ -343,6 +335,7 @@ export class AppStateStore {
         status
       };
     });
+
     this.state = { ...this.state, tasks };
     this.emit();
   }
@@ -350,24 +343,14 @@ export class AppStateStore {
   /**
    * 同步运动记录到云端
    */
-  async syncSportRecord(sportType: string, beginTime: string, endTime: string, 
-                         duration: number, steps: number, distance: number, calories: number): Promise<void> {
+  async syncSportRecord(sportType: string, beginTime: string, endTime: string, duration: number, steps: number, distance: number, calories: number): Promise<void> {
     if (!this.getUserId()) {
       console.warn('[AppStateStore] 未登录，无法同步运动记录');
       return;
     }
 
     try {
-      await this.syncService.syncSportRecord(
-        this.getUserId()!,
-        sportType,
-        beginTime,
-        endTime,
-        duration,
-        steps,
-        distance,
-        calories
-      );
+      await this.syncService.syncSportRecord(this.getUserId()!, sportType, beginTime, endTime, duration, steps, distance, calories);
       console.info('[AppStateStore] 运动记录同步成功');
     } catch (error) {
       console.error('[AppStateStore] 同步运动记录失败:', JSON.stringify(error));
@@ -377,37 +360,18 @@ export class AppStateStore {
   /**
    * 同步身体数据到云端
    */
-  async syncBodyRecord(recordTime: string, height: number, weight: number,
-                        bust: number, waistline: number, hipline: number,
-                        systolicPressure: number, diastolicPressure: number, heartRate: number): Promise<void> {
+  async syncBodyRecord(recordTime: string, height: number, weight: number, bust: number, waistline: number, hipline: number, systolicPressure: number, diastolicPressure: number, heartRate: number): Promise<void> {
     if (!this.getUserId()) {
       console.warn('[AppStateStore] 未登录，无法同步身体数据');
       return;
     }
 
     try {
-      await this.syncService.syncBodyRecord(
-        this.getUserId()!,
-        recordTime,
-        height,
-        weight,
-        bust,
-        waistline,
-        hipline,
-        systolicPressure,
-        diastolicPressure,
-        heartRate
-      );
+      await this.syncService.syncBodyRecord(this.getUserId()!, recordTime, height, weight, bust, waistline, hipline, systolicPressure, diastolicPressure, heartRate);
       console.info('[AppStateStore] 身体数据同步成功');
     } catch (error) {
       console.error('[AppStateStore] 同步身体数据失败:', JSON.stringify(error));
     }
   }
 }
-
-
-
-
-
-
 

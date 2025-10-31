@@ -1,9 +1,11 @@
-import { router } from '@kit.ArkUI'
+import { router, window } from '@kit.ArkUI'
 import { CommonTitleView } from '../view/CommonTitleView'
 import { Utils } from '../tools/Utils'
 import AppDataManager from '../tools/AppDataManager'
 import { DateUtils } from '../tools/DateUtils'
 import { systemDateTime } from '@kit.BasicServicesKit'
+
+const PRIMARY = '#0cc291'
 
 interface ExerciseType {
   id: number
@@ -17,6 +19,8 @@ struct AddExercisePage {
   @State selectedType: number = 1
   @State duration: number = 30 // 分钟
   @State distance: number = 1.0 // 公里
+  @State tempDuration: number = 30
+  @State tempDistance: number = 1.0
   @State selectedDate: string = DateUtils.getYMD()
   @State selectedTime: string = '10:00'
   @State showTypeDialog: boolean = false
@@ -24,6 +28,8 @@ struct AddExercisePage {
   @State showDistanceDialog: boolean = false
   @State showDateDialog: boolean = false
   @State showTimeDialog: boolean = false
+  @State userModifiedDistance: boolean = false // 用户是否手动修改过距离
+  @State calories: number = 0 // 消耗的热量
 
   private exerciseTypes: Array<ExerciseType> = [
     { id: 1, name: '室内跑步', icon: $r('app.media.sport_indoor_run') },
@@ -38,6 +44,38 @@ struct AddExercisePage {
     // 设置默认时间为当前时间
     const now = new Date()
     this.selectedTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+    this.tempDuration = this.duration
+    this.tempDistance = this.distance
+  }
+
+  private generateDurationList(): Array<number> {
+    const list: Array<number> = []
+    for (let i = 1; i <= 300; i++) { // 1~300 分钟
+      list.push(i)
+    }
+    return list
+  }
+
+  private getDurationSelectedIndex(): number {
+    const list = this.generateDurationList()
+    const idx = list.findIndex(v => v === this.tempDuration)
+    return idx >= 0 ? idx : Math.max(0, Math.min(list.length - 1, this.tempDuration - 1))
+  }
+
+  private generateDistanceList(): Array<number> {
+    const list: Array<number> = []
+    // 0.1 ~ 100.0 公里，步进 0.1
+    for (let i = 1; i <= 1000; i++) {
+      list.push(Math.round(i) / 10)
+    }
+    return list
+  }
+
+  private getDistanceSelectedIndex(): number {
+    const list = this.generateDistanceList()
+    const rounded = Math.round(this.tempDistance * 10) / 10
+    const idx = list.findIndex(v => v === rounded)
+    return idx >= 0 ? idx : 0
   }
 
   private calculateCalories(): number {
@@ -79,15 +117,16 @@ struct AddExercisePage {
     // 插入运动记录
     AppDataManager.insertSportRecord(
       startTime,
-      this.duration * 60, // 转换为秒
+      this.duration * 60 * 1000,
       steps,
       this.selectedType,
       0,
-      calories.toString()
+      calories.toString(),
+      () => {
+        Utils.showToast('运动记录添加成功')
+        router.back()
+      }
     )
-    
-    Utils.showToast('运动记录添加成功')
-    router.back()
   }
 
   private getSelectedTypeName(): string {
@@ -98,6 +137,11 @@ struct AddExercisePage {
   private isDistanceRequired(): boolean {
     // 所有运动类型都需要距离
     return true
+  }
+
+  private onDistanceChange(newDistance: number) {
+    this.distance = newDistance
+    this.userModifiedDistance = true
   }
 
   build() {
@@ -118,12 +162,14 @@ struct AddExercisePage {
 
           // 运动时长
           this.buildInputItem('运动时长', `${this.duration}分钟`, () => {
+            this.tempDuration = this.duration
             this.showDurationDialog = true
           })
 
           // 距离（仅部分运动类型需要）
           if (this.isDistanceRequired()) {
             this.buildInputItem('距离', `${this.distance}公里`, () => {
+              this.tempDistance = this.distance
               this.showDistanceDialog = true
             })
           }
@@ -158,7 +204,7 @@ struct AddExercisePage {
           Button('添加')
             .fontSize(16)
             .fontColor('#FFFFFF')
-            .backgroundColor('#0cc291')
+            .backgroundColor(PRIMARY)
             .borderRadius(8)
             .layoutWeight(1)
             .height(48)
@@ -188,6 +234,16 @@ struct AddExercisePage {
       if (this.showDistanceDialog) {
         this.buildDistanceDialog()
       }
+
+      // 日期选择弹窗
+      if (this.showDateDialog) {
+        this.buildDateDialog()
+      }
+
+      // 时间选择弹窗
+      if (this.showTimeDialog) {
+        this.buildTimeDialog()
+      }
     }
     .width('100%')
     .height('100%')
@@ -210,7 +266,7 @@ struct AddExercisePage {
         .fontColor('#999999')
     }
     .width('100%')
-    .height(56)
+    .height(60)
     .padding({ left: 16, right: 16 })
     .backgroundColor('#FFFFFF')
     .borderRadius(8)
@@ -255,8 +311,9 @@ struct AddExercisePage {
               .onClick(() => {
                 this.selectedType = type.id
                 this.showTypeDialog = false
-                // 重新计算距离
+                this.userModifiedDistance = false
                 this.distance = this.calculateDistance()
+                this.tempDistance = this.distance
               })
             }
           })
@@ -292,51 +349,18 @@ struct AddExercisePage {
           .fontColor('#333333')
           .margin({ bottom: 20 })
 
-        Row() {
-          Button('−')
-            .fontSize(24)
-            .fontColor('#666666')
-            .width(50)
-            .height(50)
-            .borderRadius(25)
-            .backgroundColor('#F8F8F8')
-            .onClick(() => {
-              if (this.duration > 1) {
-                this.duration = this.duration - 1
-                this.distance = this.calculateDistance()
-              }
-            })
-
-          Column() {
-            Text(this.duration.toString())
-              .fontSize(32)
-              .fontWeight(600)
-              .fontColor('#0cc291')
-            
-            Text('分钟')
-              .fontSize(16)
-              .fontColor('#666666')
-              .margin({ top: 4 })
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Center)
-
-          Button('+')
-            .fontSize(24)
-            .fontColor('#666666')
-            .width(50)
-            .height(50)
-            .borderRadius(25)
-            .backgroundColor('#F8F8F8')
-            .onClick(() => {
-              this.duration = this.duration + 1
-              this.distance = this.calculateDistance()
-            })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.SpaceBetween)
-        .alignItems(VerticalAlign.Center)
-        .margin({ bottom: 30 })
+        // 统一滑动选择器
+        TextPicker({
+          range: this.generateDurationList().map(v => `${v}分钟`),
+          selected: this.getDurationSelectedIndex()
+        })
+          .onChange((value, index) => {
+            const idx = Array.isArray(index) ? index[0] as number : (index as number)
+            this.tempDuration = this.generateDurationList()[idx]
+          })
+          .height(200)
+          .width('100%')
+          .margin({ bottom: 30 })
 
         Row() {
           Button('取消')
@@ -353,12 +377,17 @@ struct AddExercisePage {
           Button('确定')
             .fontSize(16)
             .fontColor('#FFFFFF')
-            .backgroundColor('#0cc291')
+            .backgroundColor(PRIMARY)
             .borderRadius(8)
             .layoutWeight(1)
             .height(48)
             .margin({ left: 12 })
             .onClick(() => {
+              this.duration = this.tempDuration
+              if (!this.userModifiedDistance) {
+                this.distance = this.calculateDistance()
+              }
+              this.calories = this.calculateCalories()
               this.showDurationDialog = false
             })
         }
@@ -390,49 +419,18 @@ struct AddExercisePage {
           .fontColor('#333333')
           .margin({ bottom: 20 })
 
-        Row() {
-          Button('−')
-            .fontSize(24)
-            .fontColor('#666666')
-            .width(50)
-            .height(50)
-            .borderRadius(25)
-            .backgroundColor('#F8F8F8')
-            .onClick(() => {
-              if (this.distance > 0.1) {
-                this.distance = Math.round((this.distance - 0.1) * 10) / 10
-              }
-            })
-
-          Column() {
-            Text(this.distance.toFixed(1))
-              .fontSize(32)
-              .fontWeight(600)
-              .fontColor('#0cc291')
-            
-            Text('公里')
-              .fontSize(16)
-              .fontColor('#666666')
-              .margin({ top: 4 })
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Center)
-
-          Button('+')
-            .fontSize(24)
-            .fontColor('#666666')
-            .width(50)
-            .height(50)
-            .borderRadius(25)
-            .backgroundColor('#F8F8F8')
-            .onClick(() => {
-              this.distance = Math.round((this.distance + 0.1) * 10) / 10
-            })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.SpaceBetween)
-        .alignItems(VerticalAlign.Center)
-        .margin({ bottom: 30 })
+        // 统一滑动选择器
+        TextPicker({
+          range: this.generateDistanceList().map(v => `${v.toFixed(1)}公里`),
+          selected: this.getDistanceSelectedIndex()
+        })
+          .onChange((value, index) => {
+            const idx = Array.isArray(index) ? index[0] as number : (index as number)
+            this.tempDistance = this.generateDistanceList()[idx]
+          })
+          .height(200)
+          .width('100%')
+          .margin({ bottom: 30 })
 
         Row() {
           Button('取消')
@@ -449,18 +447,144 @@ struct AddExercisePage {
           Button('确定')
             .fontSize(16)
             .fontColor('#FFFFFF')
-            .backgroundColor('#0cc291')
+            .backgroundColor(PRIMARY)
             .borderRadius(8)
             .layoutWeight(1)
             .height(48)
             .margin({ left: 12 })
             .onClick(() => {
+              this.distance = this.tempDistance // 直接更新距离值
+              this.userModifiedDistance = true // 确认用户已手动修改距离
               this.showDistanceDialog = false
             })
         }
         .width('100%')
       }
       .width('80%')
+      .padding(24)
+      .backgroundColor('#FFFFFF')
+      .borderRadius(16)
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder buildDateDialog() {
+    Stack() {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0, 0, 0, 0.5)')
+        .onClick(() => {
+          this.showDateDialog = false
+        })
+
+      Column() {
+        Text('选择运动日期')
+          .fontSize(18)
+          .fontWeight(600)
+          .fontColor('#333333')
+          .margin({ bottom: 20 })
+
+        DatePicker({
+          start: new Date('2020-01-01'),
+          end: new Date('2030-12-31'),
+          selected: new Date(this.selectedDate)
+        })
+          .onChange((value: DatePickerResult) => {
+            if (value.month !== undefined && value.day !== undefined) {
+              this.selectedDate = `${value.year}/${(value.month + 1).toString().padStart(2, '0')}/${value.day.toString().padStart(2, '0')}`
+            }
+          })
+
+        Row() {
+          Button('取消')
+            .fontSize(16)
+            .fontColor('#666666')
+            .backgroundColor('#F8F8F8')
+            .borderRadius(8)
+            .layoutWeight(1)
+            .height(48)
+            .onClick(() => {
+              this.showDateDialog = false
+            })
+          
+          Button('确定')
+            .fontSize(16)
+            .fontColor('#FFFFFF')
+            .backgroundColor(PRIMARY)
+            .borderRadius(8)
+            .layoutWeight(1)
+            .height(48)
+            .margin({ left: 12 })
+            .onClick(() => {
+              this.showDateDialog = false
+            })
+        }
+        .width('100%')
+        .margin({ top: 20 })
+      }
+      .width('90%')
+      .padding(24)
+      .backgroundColor('#FFFFFF')
+      .borderRadius(16)
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder buildTimeDialog() {
+    Stack() {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0, 0, 0, 0.5)')
+        .onClick(() => {
+          this.showTimeDialog = false
+        })
+
+      Column() {
+        Text('选择开始时间')
+          .fontSize(18)
+          .fontWeight(600)
+          .fontColor('#333333')
+          .margin({ bottom: 20 })
+
+        TimePicker({
+          selected: new Date(`2000-01-01 ${this.selectedTime}:00`)
+        })
+          .onChange((value: TimePickerResult) => {
+            this.selectedTime = `${value.hour.toString().padStart(2, '0')}:${value.minute.toString().padStart(2, '0')}`
+          })
+
+        Row() {
+          Button('取消')
+            .fontSize(16)
+            .fontColor('#666666')
+            .backgroundColor('#F8F8F8')
+            .borderRadius(8)
+            .layoutWeight(1)
+            .height(48)
+            .onClick(() => {
+              this.showTimeDialog = false
+            })
+          
+          Button('确定')
+            .fontSize(16)
+            .fontColor('#FFFFFF')
+            .backgroundColor(PRIMARY)
+            .borderRadius(8)
+            .layoutWeight(1)
+            .height(48)
+            .margin({ left: 12 })
+            .onClick(() => {
+              this.showTimeDialog = false
+            })
+        }
+        .width('100%')
+        .margin({ top: 20 })
+      }
+      .width('90%')
       .padding(24)
       .backgroundColor('#FFFFFF')
       .borderRadius(16)
