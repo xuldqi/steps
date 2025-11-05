@@ -7,6 +7,8 @@ import { DateUtils } from '../tools/DateUtils'
 import preferencesUtil from '../tools/DataPreUtils'
 import targetManager from '../tools/TargetManager'
 import { BodyRecordDialog } from '../view/BodyRecordDialog'
+import { userDataManager } from '../services/UserDataManager'
+import { Log } from '../tools/Logger'
 
 type ViewMode = 'week' | 'month' | 'year'
 type FilterMode = 'min' | 'max' | 'avg' | 'first' | 'last'
@@ -47,6 +49,7 @@ struct WeightTrendPage {
   private filterDialog?: CustomDialogController = undefined
   private earliestRecord: BodyRecordModel | null = null
   private latestRecord: BodyRecordModel | null = null
+  private metricsUnsubscribe: (() => void) | null = null
 
   private weightCallback: DataCallback<BodyRecordModel> = {
     onDataResult: (type: number, result: BodyRecordModel[], isFirst: boolean): void => {
@@ -60,13 +63,38 @@ struct WeightTrendPage {
     }
   }
 
-  onPageShow() {
-    // 先加载配置，再刷新数据
+  aboutToAppear() {
+    // 订阅全局用户指标变化，保证“体重概览”即时刷新
+    this.metricsUnsubscribe?.()
+    this.metricsUnsubscribe = userDataManager.subscribe((metrics) => {
+      if (typeof metrics.weight === 'number' && metrics.weight > 0) {
+        this.currentWeight = metrics.weight
+      }
+      // 订阅到全局变化后，基于现有记录重新汇总展示
+      this.refreshAll()
+    })
+    // 页面首次创建时也加载数据
     void this.loadPrefs().then(() => {
       this.refreshData()
     })
+  }
+
+  async onPageShow() {
+    // 先拉取一次最新全局指标，保证当前体重等信息一致
+    await userDataManager.refreshMetrics()
+    // 页面显示时（包括从其他页面返回）刷新数据
+    await this.loadPrefs()
+    // 刷新数据（数据加载完成后会自动通过weightCallback调用refreshAll）
+    this.refreshData()
     // 初始化筛选弹窗
     this.filterDialog = new CustomDialogController({ builder: (): void => { this.filterDialogBuilder() }, autoCancel: true })
+  }
+
+  aboutToDisappear() {
+    if (this.metricsUnsubscribe) {
+      this.metricsUnsubscribe()
+      this.metricsUnsubscribe = null
+    }
   }
 
   private refreshData() {
@@ -114,8 +142,20 @@ struct WeightTrendPage {
     const sorted = [...this.allWeights].sort((a, b) => a.time - b.time)
     this.earliestRecord = sorted[0]
     this.latestRecord = sorted[sorted.length - 1]
-    this.initialWeight = parseFloat(sorted[0].data)
-    this.currentWeight = parseFloat(sorted[sorted.length - 1].data)
+    
+    // 解析体重数据，确保正确转换（先清理单位字符）
+    let cleanInitialData = sorted[0].data.replace(/[^0-9.]/g, '')
+    let cleanCurrentData = sorted[sorted.length - 1].data.replace(/[^0-9.]/g, '')
+    const initialWeightValue = parseFloat(cleanInitialData)
+    const currentWeightValue = parseFloat(cleanCurrentData)
+    
+    console.info('[WeightTrendPage] computeBaseFigures: initialWeightValue=', initialWeightValue, 'currentWeightValue=', currentWeightValue, 'from data=', sorted[0].data, sorted[sorted.length - 1].data, 'cleaned:', cleanInitialData, cleanCurrentData)
+    
+    this.initialWeight = isNaN(initialWeightValue) || initialWeightValue <= 0 ? 0 : initialWeightValue
+    this.currentWeight = isNaN(currentWeightValue) || currentWeightValue <= 0 ? 0 : currentWeightValue
+    
+    console.info('[WeightTrendPage] computeBaseFigures: initialWeight=', this.initialWeight, 'currentWeight=', this.currentWeight)
+    
     this.initialDateLabel = this.formatDisplayDate(sorted[0].time)
     this.currentDateLabel = this.formatDisplayDate(sorted[sorted.length - 1].time)
     const firstDay = new Date(sorted[0].time).toDateString()
@@ -194,7 +234,17 @@ struct WeightTrendPage {
       return 0
     }
     const sorted = [...records].sort((a, b) => a.time - b.time)
-    const weights = sorted.map(r => parseFloat(r.data))
+    const weights = sorted.map(r => {
+      // 移除可能的单位字符，只保留数字和小数点
+      let cleanData = r.data.replace(/[^0-9.]/g, '')
+      const val = parseFloat(cleanData)
+      return isNaN(val) ? 0 : val
+    }).filter(v => v > 0)
+    
+    if (weights.length === 0) {
+      return 0
+    }
+    
     switch (this.filterMode) {
       case 'min':
         return Math.min(...weights)
@@ -307,17 +357,21 @@ struct WeightTrendPage {
     console.info('[WeightTrendPage] updateOverview: statDays=', this.statDays, 'unique days=', Array.from(daySet))
     
     const vals = this.allWeights.map(r => {
-      const val = parseFloat(r.data)
-      if (isNaN(val)) {
-        console.error('[WeightTrendPage] updateOverview: invalid weight data:', r.data)
+      // 移除可能的单位字符，只保留数字和小数点
+      let cleanData = r.data.replace(/[^0-9.]/g, '')
+      const val = parseFloat(cleanData)
+      if (isNaN(val) || val <= 0) {
+        console.error('[WeightTrendPage] updateOverview: invalid weight data:', r.data, 'cleaned:', cleanData, 'parsed:', val)
         return 0
       }
       return val
     }).filter(v => v > 0)
     
+    console.info('[WeightTrendPage] updateOverview: vals.length=', vals.length, 'vals=', vals)
+    
     if (vals.length === 0) {
-      console.error('[WeightTrendPage] updateOverview: no valid weight values')
-      this.statDays = 0
+      console.error('[WeightTrendPage] updateOverview: no valid weight values, allWeights.length=', this.allWeights.length)
+      this.statDays = daySet.size // 即使没有有效值，也显示记录天数
       this.statMax = '--'
       this.statMin = '--'
       this.statAvgDelta = '--'
@@ -341,14 +395,19 @@ struct WeightTrendPage {
       }
     }
     console.info('[WeightTrendPage] updateOverview: series.length=', series.length, 'series=', series)
-    if (series.length <= 1) { 
-      this.statAvgDelta = series.length === 0 ? '--' : '0.0公斤'
-      return 
+    if (series.length === 0) {
+      this.statAvgDelta = '--'
+    } else if (series.length === 1) {
+      this.statAvgDelta = '0.0公斤'
+    } else {
+      let sum = 0
+      for (let i = 1; i < series.length; i++) {
+        sum += (series[i] - series[i - 1])
+      }
+      const avgDelta = sum / (series.length - 1)
+      this.statAvgDelta = `${avgDelta >= 0 ? '+' : ''}${avgDelta.toFixed(1)}公斤`
     }
-    let sum = 0
-    for (let i=1;i<series.length;i++) sum += (series[i]-series[i-1])
-    this.statAvgDelta = `${(sum/(series.length-1)).toFixed(1)}公斤`
-    console.info('[WeightTrendPage] updateOverview: statAvgDelta=', this.statAvgDelta)
+    console.info('[WeightTrendPage] updateOverview: statDays=', this.statDays, 'statMin=', this.statMin, 'statMax=', this.statMax, 'statAvgDelta=', this.statAvgDelta)
   }
 
   private formatWeightDisplay(value: number): string {
@@ -466,6 +525,7 @@ struct WeightTrendPage {
           confirm: async (value: number, _type: number) => {
             dialog.close()
             const formatted = value.toFixed(1)
+            const weightValue = parseFloat(formatted)
             if (this.earliestRecord) {
               const base = this.earliestRecord
               const updated: BodyRecordModel = {
@@ -479,6 +539,7 @@ struct WeightTrendPage {
             } else {
               appDataManager.insertBodyRecord(AppDataManager.TYPE_WEIGHT, formatted)
             }
+            await this.syncWithGlobalWeight()
             this.windowEndDate = new Date()
             // 延迟一下确保数据库操作完成后再刷新
             setTimeout(() => {
@@ -514,6 +575,7 @@ struct WeightTrendPage {
           confirm: async (value: number, _type: number) => {
             dialog.close()
             const formatted = value.toFixed(1)
+            const weightValue = parseFloat(formatted)
             if (this.latestRecord) {
               const base = this.latestRecord
               const updated: BodyRecordModel = {
@@ -527,6 +589,7 @@ struct WeightTrendPage {
             } else {
               appDataManager.insertBodyRecord(AppDataManager.TYPE_WEIGHT, formatted)
             }
+            await this.syncWithGlobalWeight()
             this.windowEndDate = new Date()
             // 延迟一下确保数据库操作完成后再刷新
             setTimeout(() => {
@@ -560,7 +623,10 @@ struct WeightTrendPage {
         },
         confirm: async (value: number, _type: number) => {
           dialog.close()
-          appDataManager.insertBodyRecord(AppDataManager.TYPE_WEIGHT, value.toFixed(1))
+          const formatted = value.toFixed(1)
+          const weightValue = parseFloat(formatted)
+          appDataManager.insertBodyRecord(AppDataManager.TYPE_WEIGHT, formatted)
+          await this.syncWithGlobalWeight()
           this.windowEndDate = new Date()
           // 延迟一下确保数据库操作完成后再刷新
           setTimeout(() => {
@@ -571,6 +637,26 @@ struct WeightTrendPage {
       autoCancel: true
     })
     dialog.open()
+  }
+
+  private async syncWithGlobalWeight(): Promise<void> {
+    try {
+      await new Promise<void>((resolve) => {
+        appDataManager.findBodyRecordByType(AppDataManager.TYPE_WEIGHT, {
+          onDataResult: async (_type: number, result: Array<BodyRecordModel>): Promise<void> => {
+            const sorted = (result ?? []).slice().sort((a, b) => b.time - a.time)
+            const latest = sorted[0]
+            const value = latest ? parseFloat((typeof latest.data === 'string' ? latest.data.replace(/[^0-9.]/g, '') : `${latest.data}`)) : 0
+            const normalized = Number.isNaN(value) || value <= 0 ? 0 : value
+            await userDataManager.updateWeight(normalized)
+            await userDataManager.refreshMetrics()
+            resolve()
+          }
+        }, false)
+      })
+    } catch (error) {
+      Log.e('[WeightTrendPage] syncWithGlobalWeight failed: ' + JSON.stringify(error))
+    }
   }
 
   private async onTargetModified(newValue: number) {

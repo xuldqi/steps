@@ -21,6 +21,11 @@ export struct BodyRecordDialog {
   confirm: (data:number,bodyType:number) => void = () => {
   }
 
+  aboutToAppear() {
+    // 初始化 curValue 为 selectNum，确保即使用户没有滚动也能获取到正确的值
+    this.curValue = this.selectNum
+  }
+
   build() {
     Column() {
       Row(){
@@ -39,34 +44,35 @@ export struct BodyRecordDialog {
         markColor:'#0cc291',
         currentValue:this.selectNum,
         onUpdate:(v) => {
-          Log.i("onUpdate 1:"+v)
           this.curValue = parseFloat(v)
           this.content = v
         }
       }).height(80).width('95%')
 
       Row() {
-        Text('取消')
-          .width('50%')
-          .height(50)
-          .backgroundColor('#ffbebebe')
-          .fontColor(Color.White)
-          .fontSize(16)
-          .textAlign(TextAlign.Center)
+        Button('取消')
+          .type(ButtonType.Capsule)
+          .backgroundColor('#F5F5F5')
+          .fontColor('#333333')
+          .width(120)
           .onClick(() => {
             this.cancel() //调用回调
           })
-        Text('确定')
-          .width('50%')
-          .height(50)
+        Button('确定')
+          .type(ButtonType.Capsule)
           .backgroundColor('#0cc291')
-          .fontColor(Color.White)
-          .fontSize(16)
-          .textAlign(TextAlign.Center)
+          .fontColor('#FFFFFF')
+          .width(120)
+          .margin({ left: 12 })
           .onClick(() => {
-            this.confirm(this.curValue,this.bodyType) //调用回调
+            // 如果 curValue 为 0 或无效，使用 selectNum 作为备用值
+            const finalValue = (this.curValue > 0) ? this.curValue : this.selectNum
+            this.confirm(finalValue, this.bodyType) //调用回调
           })
-      }.margin({top:15})
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      .margin({ top: 20, bottom: 20 })
     }.width('100%').height('AUTO')
   }
 }

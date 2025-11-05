@@ -11,14 +11,15 @@ import { SettingItemView } from '../view/SettingItemView'
 import StepData, { StepsCallback } from '../appdata/StepData'
 import preferencesUtil from '../tools/DataPreUtils'
 import { MainCardData, MainCardView } from '../view/MainCardView'
-import AppDataManager, { AllSportCallback, DataCallback, ModelCallback } from '../tools/AppDataManager'
+import appDataManager, { AppDataManager, AllSportCallback, DataCallback, ModelCallback } from '../tools/AppDataManager'
 import { router, window } from '@kit.ArkUI'
 import EntryAbility from '../entryability/EntryAbility'
 import { DateUtils } from '../tools/DateUtils'
-import { SportModel, PerStepModel } from '../appdata/Model'
+import { SportModel, PerStepModel, BodyRecordModel } from '../appdata/Model'
 import { AppStateStore } from '../services/AppStateStore'
 import type { AppState } from '../models/AppModels'
 import targetManager, { TargetValue } from '../tools/TargetManager'
+import { userDataManager } from '../services/UserDataManager'
 
 interface GoalProgressItem {
   key: string,
@@ -77,6 +78,7 @@ struct MainTabs {
     new Scroller(),
     new Scroller(),
     new Scroller(),
+    new Scroller(),
     new Scroller()
   ]
   private tarSteps:number = 5000
@@ -122,6 +124,13 @@ struct MainTabs {
     subTopTitle:'累计登山距离',
     subTopData: '9', //总的运动里程
     subBotData: '登山记录', //运动底部提示
+  }
+  @State subFragmentDataRide: SubFragmentData = {
+    type:6, // 运动类型 骑行
+    curTarget:'自由',
+    subTopTitle:'累计骑行距离',
+    subTopData: '0', //总的运动里程
+    subBotData: '骑行记录', //运动底部提示
   }
 
   @State stepsHintStr: string = '经常运动的人睡眠质量比一般人好50%'//中部运动提示语
@@ -210,16 +219,39 @@ struct MainTabs {
   private activityTargetSetting: number = DEFAULT_ACTIVITY_TARGET
 
   private currentCalories: number = 0
+  private stepCalories: number = 0 // 步数产生的热量
+  private sportRecordCalories: number = 0 // 运动记录产生的热量
   private currentSportMinutes: number = 0
   private currentActivityCount: number = 0
   private appStore = AppStateStore.getInstance()
   private unsubscribe: (() => void) | null = null
+  private metricsUnsubscribe: (() => void) | null = null
 
   aboutToAppear(): void {
     this.unsubscribe?.()
     this.unsubscribe = this.appStore.subscribe((state: AppState) => {
       this.applyAppState(state)
     })
+    // 订阅用户身体数据变化
+    this.metricsUnsubscribe?.()
+    this.metricsUnsubscribe = userDataManager.subscribe((metrics) => {
+      this.currentHeight = metrics.height
+      this.currentWeight = metrics.weight
+      this.userAge = metrics.age
+      this.userGender = metrics.gender
+      this.calculateBodyMetrics()
+      // 同步刷新首页卡片文案
+      this.updateMainCard()
+    })
+    // 进入时立即拉取一次，避免回到“我的”页显示旧值
+    void (async (): Promise<void> => {
+      const metrics = await userDataManager.loadMetrics()
+      if (typeof metrics.height === 'number' && metrics.height > 0) this.currentHeight = metrics.height
+      if (typeof metrics.weight === 'number' && metrics.weight > 0) this.currentWeight = metrics.weight
+      if (typeof metrics.age === 'number' && metrics.age >= 0) this.userAge = metrics.age
+      if (metrics.gender) this.userGender = metrics.gender
+      this.calculateBodyMetrics()
+    })()
     this.syncUserProfile()
     this.loadGoalTargets()
     this.requestTodaySportSummary()
@@ -230,7 +262,13 @@ struct MainTabs {
   }
 
   aboutToDisappear(): void {
+    this.stopDailyWatcher()
     targetManager.removeListener(this.onTargetsChanged)
+    // 保留用户数据订阅（避免跳转期间错过广播）
+    if (this.unsubscribe) {
+      this.unsubscribe()
+      this.unsubscribe = null
+    }
   }
 
   private onTargetsChanged = (targets: TargetValue) => {
@@ -263,9 +301,36 @@ struct MainTabs {
     if (!preferencesUtil.preferencesMap.has('steps_ohos') && EntryAbility.context) {
       await preferencesUtil.loadPreference(EntryAbility.context, 'steps_ohos')
     }
-    const storedName = await preferencesUtil.getPreferenceValue('steps_ohos', 'userName', this.userName)
-    if (typeof storedName === 'string') {
-      this.userName = storedName
+    // 检查是否使用本地昵称
+    const useLocalNickname = await preferencesUtil.getPreferenceValue('steps_ohos', 'useLocalNickname', false) as boolean
+    if (useLocalNickname) {
+      // 如果使用本地昵称，优先读取本地昵称
+      const localNickname = await preferencesUtil.getPreferenceValue('steps_ohos', 'userNickname', '') as string
+      if (typeof localNickname === 'string' && localNickname.length > 0) {
+        this.userName = localNickname
+      } else {
+        // 如果没有本地昵称，检查userName
+        const storedName = await preferencesUtil.getPreferenceValue('steps_ohos', 'userName', this.userName) as string
+        if (typeof storedName === 'string' && storedName.length > 0) {
+          this.userName = storedName
+        }
+      }
+    } else {
+      // 如果没有设置使用本地昵称，检查是否有本地昵称
+      const localNickname = await preferencesUtil.getPreferenceValue('steps_ohos', 'userNickname', '') as string
+      if (typeof localNickname === 'string' && localNickname.length > 0) {
+        // 有本地昵称，使用本地昵称
+        this.userName = localNickname
+      } else {
+        // 没有本地昵称，检查是否有登录账号名称
+        const storedName = await preferencesUtil.getPreferenceValue('steps_ohos', 'userName', this.userName) as string
+        if (typeof storedName === 'string' && storedName.length > 0 && storedName !== '未登录用户') {
+          this.userName = storedName
+        } else {
+          // 未登录，默认显示"未登录用户"
+          this.userName = '未登录用户'
+        }
+      }
     }
     const storedCode = await preferencesUtil.getPreferenceValue('steps_ohos', 'userCode', this.userCode)
     if (typeof storedCode === 'string') {
@@ -274,23 +339,64 @@ struct MainTabs {
   }
 
   private handleLoginTap(): void {
-    if (this.userName === '未登录用户') {
-      try {
-        router.pushUrl({ url: 'pages/LoginPage' }).catch((err: Error) => {
-          console.error('[MainTabs] 跳转登录页失败:', err.message);
-        });
-      } catch (err) {
-        console.error('[MainTabs] 跳转登录页异常:', err);
-      }
+    console.info('[MainTabs] ===== handleLoginTap 被调用 =====');
+    console.info('[MainTabs] 当前 userName:', this.userName);
+    console.info('[MainTabs] userName === "未登录用户"?', this.userName === '未登录用户');
+    console.info('[MainTabs] userName 类型:', typeof this.userName);
+    console.info('[MainTabs] userName 长度:', this.userName.length);
+    console.info('[MainTabs] userName 字符码:', JSON.stringify(Array.from(this.userName).map(c => c.charCodeAt(0))));
+    
+    // 无论是否登录，都允许点击进入登录页面
+    try {
+      console.info('[MainTabs] 准备跳转到登录页面 pages/LoginPage');
+      router.pushUrl({ url: 'pages/LoginPage' }).then(() => {
+        console.info('[MainTabs] ✅ 成功跳转到登录页面');
+      }).catch((err: Error) => {
+        console.error('[MainTabs] ❌ 跳转登录页失败:', err.message);
+        console.error('[MainTabs] 错误详情:', JSON.stringify(err));
+      });
+    } catch (err) {
+      console.error('[MainTabs] ❌ 跳转登录页异常:', err);
+      console.error('[MainTabs] 异常详情:', JSON.stringify(err));
     }
   }
 
-  private applyAppState(state: AppState): void {
+  private async applyAppState(state: AppState): Promise<void> {
     if (state && state.user) {
-      this.userName = state.user.nickname ?? '运动达人'
-      this.userCode = state.user.inviteCode ? `邀请码：${state.user.inviteCode}` : '已登录'
+      // 检查是否使用本地昵称
+      const useLocal = await preferencesUtil.getPreferenceValue('steps_ohos', 'useLocalNickname', false) as boolean
+      if (useLocal === true) {
+        // 如果使用本地昵称，不更新为账号昵称
+        const localNickname = await preferencesUtil.getPreferenceValue('steps_ohos', 'userNickname', '') as string
+        if (typeof localNickname === 'string' && localNickname.length > 0) {
+          this.userName = localNickname
+        }
+      } else {
+        // 如果没有使用本地昵称，检查是否有本地昵称
+        const localNickname = await preferencesUtil.getPreferenceValue('steps_ohos', 'userNickname', '') as string
+        if (typeof localNickname === 'string' && localNickname.length > 0) {
+          // 有本地昵称，使用本地昵称
+          this.userName = localNickname
+        } else {
+          // 没有本地昵称，使用账号昵称
+          if (state.user) {
+            this.userName = state.user.nickname ?? '运动达人'
+          }
+        }
+      }
+      if (state.user) {
+        this.userCode = state.user.inviteCode ? `邀请码：${state.user.inviteCode}` : '已登录'
+      }
     } else {
-      this.userName = '未登录用户'
+      // 未登录状态
+      const localNickname = await preferencesUtil.getPreferenceValue('steps_ohos', 'userNickname', '') as string
+      if (typeof localNickname === 'string' && localNickname.length > 0) {
+        // 有本地昵称，使用本地昵称
+        this.userName = localNickname
+      } else {
+        // 没有本地昵称，显示"未登录用户"
+        this.userName = '未登录用户'
+      }
       this.userCode = '华为账号登录'
     }
   }
@@ -379,13 +485,48 @@ struct MainTabs {
   // TAB view 的按钮的新建
   @Builder subTabBuilder(index: number,title:string) {
     Column() {
-      Text(title).padding({top:3 })
+      Text(title)
+        .padding({ top: 3, left: 14, right: 14 })
         .fontColor(this.currentSubIndex === index ? this.selectedFontColor : this.fontColor)
-        .fontSize(16).fontWeight(500).textAlign(TextAlign.Start).alignSelf(ItemAlign.Start)//TabView按钮的文本
-    }.width('100%').align(Alignment.Start)
+        .fontSize(16)
+        .fontWeight(500)
+        .textAlign(TextAlign.Center)
+        .textOverflow({ overflow: TextOverflow.Clip })
+        .maxLines(1)
+        .alignSelf(ItemAlign.Center)
+    }
+    .align(Alignment.Center)
+    .width('auto')
   }
 
   async onPageShow(){
+    // 返回时重新建立订阅，确保收到全局广播
+    this.metricsUnsubscribe?.()
+    this.metricsUnsubscribe = userDataManager.subscribe((metrics) => {
+      this.currentHeight = metrics.height
+      this.currentWeight = metrics.weight
+      this.userAge = metrics.age
+      this.userGender = metrics.gender
+      this.calculateBodyMetrics()
+      // 同步刷新首页卡片文案
+      this.updateMainCard()
+    })
+    
+    // 第一步：优先从数据库直接读取最新记录，确保返回即可见最新值
+    await Promise.all([
+      this.syncLatestHeightFromDB(),
+      this.syncLatestWeightFromDB()
+    ])
+    
+    // 第二步：刷新全局状态并应用
+    await userDataManager.refreshMetrics()
+    const latestMetrics = await userDataManager.loadMetrics()
+    if (typeof latestMetrics.height === 'number' && latestMetrics.height > 0) this.currentHeight = latestMetrics.height
+    if (typeof latestMetrics.weight === 'number' && latestMetrics.weight > 0) this.currentWeight = latestMetrics.weight
+    if (typeof latestMetrics.age === 'number' && latestMetrics.age >= 0) this.userAge = latestMetrics.age
+    if (latestMetrics.gender) this.userGender = latestMetrics.gender
+    this.calculateBodyMetrics()
+    
     //目标步数初始化
     await targetManager.loadTargets()
     this.tarSteps = targetManager.getTarget('step_target')
@@ -400,8 +541,9 @@ struct MainTabs {
     //卡片信息更新
     this.updateMainCard()
     
-    // 加载身体数据
-    this.loadBodyData()
+    // 第三步：后台同步数据库到全局状态（不阻塞UI）
+    void this.syncLatestHeight()
+    void this.syncLatestWeight()
 
     StepData.checkIsFirstOpenToday()//每次初始化一次步数信息
     //检查权限,注册步数监听
@@ -421,13 +563,13 @@ struct MainTabs {
     this.onUpdateSportTarget()
 
     //检查运动记录是否变化，更新第二个页面的总运动信息
-    if(AppDataManager.getSportDataStatus().isChange){
-      AppDataManager.findSportAllData(this.sportCallback)
-      AppDataManager.resetSportDataStatus()
+    if(appDataManager.getSportDataStatus().isChange){
+      appDataManager.findSportAllData(this.sportCallback)
+      appDataManager.resetSportDataStatus()
     }
     this.requestTodaySportSummary()
     //更新周步数信息
-    AppDataManager.getStepPerDayWeek(this.modelCallBack)
+    appDataManager.getStepPerDayWeek(this.modelCallBack)
     this.loadDailyQuote()
   }
 
@@ -455,28 +597,31 @@ struct MainTabs {
    * 更新卡片的列表
    * */
   private updateMainCard(){
-    this.line1.length = 0;
-    this.line2.length = 0;
-    this.line3.length = 0;
-    //mainCardContainer.removeAllViews();
-    let mainCards:ArrayList<number> = mainCardManager.getCardSet();
+    const mainCards:ArrayList<number> = mainCardManager.getCardSet();
+    const nextLine1:Array<MainCardData> = []
+    const nextLine2:Array<MainCardData> = []
+    const nextLine3:Array<MainCardData> = []
     for(let i=0;i<mainCards.length;i++){
-      if(this.line1.length<2){
-        this.line1.push(this.createMainCardData(mainCards[i], i))
-        Log.i("line1:"+mainCards[i])
+      const cardType = mainCards[i]
+      if(nextLine1.length<2){
+        nextLine1.push(this.createMainCardData(cardType, i))
+        Log.i("line1:"+cardType)
         continue
       }
-      if(this.line2.length<2){
-        this.line2.push(this.createMainCardData(mainCards[i], i-2))
-        Log.i("line2:"+mainCards[i])
+      if(nextLine2.length<2){
+        nextLine2.push(this.createMainCardData(cardType, i-2))
+        Log.i("line2:"+cardType)
         continue
       }
-      if(this.line3.length<2){
-        this.line3.push(this.createMainCardData(mainCards[i], i-4))
-        Log.i("line3:"+mainCards[i])
+      if(nextLine3.length<2){
+        nextLine3.push(this.createMainCardData(cardType, i-4))
+        Log.i("line3:"+cardType)
         continue
       }
     }
+    this.line1 = nextLine1
+    this.line2 = nextLine2
+    this.line3 = nextLine3
 
     if (mainCardManager.getMainCardChanged()) {
       mainCardManager.setMainCardChangedAlreadyUpdate();
@@ -485,10 +630,23 @@ struct MainTabs {
 
   private createMainCardData(item:number, index:number): MainCardData {
     const metrics = this.cardMetrics[item]
-    const subtitle = metrics?.subtitle ?? AppDataManager.getMainCardSubStr(item)
-    const value = metrics?.value ?? AppDataManager.getMainCardSubData(item)
-    const prevTitle = metrics?.prevTitle ?? AppDataManager.getMainCardLastTitle(item)
-    const prevValue = metrics?.prevValue ?? AppDataManager.getMainCardLastData(item)
+    let subtitle = metrics?.subtitle ?? appDataManager.getMainCardSubStr(item)
+    let value = metrics?.value ?? appDataManager.getMainCardSubData(item)
+    let prevTitle = metrics?.prevTitle ?? appDataManager.getMainCardLastTitle(item)
+    let prevValue = metrics?.prevValue ?? appDataManager.getMainCardLastData(item)
+
+    if (item === MainCardManager.STEPS_BODY_DATA) {
+      subtitle = '身高'
+      value = this.currentHeight > 0 ? `${this.currentHeight.toFixed(1)}厘米` : '未记录'
+      prevTitle = ''
+      prevValue = ''
+    } else if (item === MainCardManager.STEPS_WEIGHT) {
+      subtitle = '当前'
+      value = this.currentWeight > 0 ? `${this.currentWeight.toFixed(1)}公斤` : '未记录'
+      prevTitle = ''
+      prevValue = ''
+    }
+
     const data: MainCardData = {
       item,
       index,
@@ -504,8 +662,8 @@ struct MainTabs {
 
   private updateCardMetrics(type: number, metrics: Partial<MainCardMetrics>) {
     const previous: MainCardMetrics = this.cardMetrics[type] ?? {
-      subtitle: AppDataManager.getMainCardSubStr(type),
-      value: AppDataManager.getMainCardSubData(type)
+      subtitle: appDataManager.getMainCardSubStr(type),
+      value: appDataManager.getMainCardSubData(type)
     }
     const merged: MainCardMetrics = {
       subtitle: metrics.subtitle ?? previous.subtitle,
@@ -513,6 +671,7 @@ struct MainTabs {
       prevTitle: metrics.prevTitle ?? previous.prevTitle,
       prevValue: metrics.prevValue ?? previous.prevValue
     }
+    // 避免对象扩展运算符带来的 ArkTS 限制，直接赋值
     this.cardMetrics[type] = merged
     this.updateMainCard()
   }
@@ -570,7 +729,7 @@ struct MainTabs {
   }
 
   private loadYesterdayMetrics() {
-    AppDataManager.getStepPerDay(DateUtils.getYMD_(1), this.yesterdayStepCallback)
+    appDataManager.getStepPerDay(DateUtils.getYMD_(1), this.yesterdayStepCallback)
   }
 
   private async loadGoalTargets() {
@@ -587,7 +746,7 @@ struct MainTabs {
   private requestTodaySportSummary() {
     const startOfDay: number = DateUtils.dateToTimestamp(DateUtils.getYMD())
     const endOfDay: number = startOfDay + 24 * 60 * 60 * 1000 - 1
-    AppDataManager.findAllByTypeWithDate(0, startOfDay, endOfDay, this.goalSportCallback)
+    appDataManager.findAllByTypeWithDate(0, startOfDay, endOfDay, this.goalSportCallback)
   }
 
   private goalSportCallback = {
@@ -607,47 +766,39 @@ struct MainTabs {
       }
       this.currentSportMinutes = totalMinutes
       this.currentActivityCount = qualifiedCount
+      this.sportRecordCalories = totalCalories // 保存运动记录热量
+      // 合并步数热量和运动记录热量
+      this.currentCalories = this.stepCalories + this.sportRecordCalories
+      this.updateGoalProgressItem('calorie', this.currentCalories, this.calorieTargetSetting)
       this.updateGoalProgressItem('time', this.currentSportMinutes, this.timeTargetSetting)
       this.updateGoalProgressItem('activity', this.currentActivityCount, this.activityTargetSetting)
-      const summaryParts: Array<string> = []
-      if (qualifiedCount > 0) {
-        summaryParts.push(`${qualifiedCount}次`)
+      
+      // 按 start_time 降序排序，最新的在前
+      const sortedResult = [...result].sort((a, b) => b.start_time - a.start_time)
+      
+      // 当前：显示最近一次运动记录
+      let currentValue = '无数据'
+      if (sortedResult.length > 0) {
+        const latestRecord = sortedResult[0]
+        const sportTypeName = Utils.getSportRecordName(Number(latestRecord.type))
+        const minutes = Math.max(0, Math.floor(latestRecord.use_time / 60000))
+        currentValue = `${sportTypeName} ${minutes}分钟`
       }
-      if (totalMinutes > 0) {
-        summaryParts.push(`${totalMinutes}分钟`)
+      
+      // 上次：显示上一次（第二近）的运动记录
+      let prevValue = '无数据'
+      if (sortedResult.length > 1) {
+        const secondRecord = sortedResult[1]
+        const sportTypeName = Utils.getSportRecordName(Number(secondRecord.type))
+        const minutes = Math.max(0, Math.floor(secondRecord.use_time / 60000))
+        prevValue = `${sportTypeName} ${minutes}分钟`
       }
-      if (totalCalories > 0) {
-        summaryParts.push(`${Math.round(totalCalories)}千卡`)
-      }
-      if (totalDistance > 0) {
-        summaryParts.push(`${totalDistance.toFixed(1)}公里`)
-      }
-      const currentSummary = summaryParts.length > 0 ? summaryParts.join(' · ') : '暂无记录'
-      const lastRecord = result.length > 0 ? result[result.length - 1] : undefined
-      let lastSummary = '暂无记录'
-      if (lastRecord) {
-        const lastMinutes = Math.max(0, Math.floor(lastRecord.use_time / 60000))
-        const lastCalories = Math.round(Number.parseFloat(lastRecord.cal ?? '0'))
-        const lastDistance = (lastRecord.steps * 0.6 / 1000).toFixed(1)
-        const lastParts: Array<string> = []
-        if (lastMinutes > 0) {
-          lastParts.push(`${lastMinutes}分钟`)
-        }
-        if (lastCalories > 0) {
-          lastParts.push(`${lastCalories}千卡`)
-        }
-        if (lastDistance !== '0.0') {
-          lastParts.push(`${lastDistance}公里`)
-        }
-        if (lastParts.length > 0) {
-          lastSummary = lastParts.join(' · ')
-        }
-      }
+      
       this.updateCardMetrics(MainCardManager.STEPS_SPORTS, {
-        subtitle: '今日',
-        value: currentSummary,
+        subtitle: '当前',
+        value: currentValue,
         prevTitle: '上次',
-        prevValue: lastSummary
+        prevValue: prevValue
       })
     }
   } as DataCallback<SportModel>
@@ -657,11 +808,13 @@ struct MainTabs {
       steps = 0
     }
     const calories = Number.parseFloat(Utils.getKalByStep(steps))
-    this.currentCalories = calories
-    this.updateGoalProgressItem('calorie', calories, this.calorieTargetSetting)
+    this.stepCalories = calories // 保存步数热量
+    // 合并步数热量和运动记录热量
+    this.currentCalories = this.stepCalories + this.sportRecordCalories
+    this.updateGoalProgressItem('calorie', this.currentCalories, this.calorieTargetSetting)
     this.updateCardMetrics(MainCardManager.STEPS_ENERGY, {
       subtitle: '今日',
-      value: `${Math.round(calories)}千卡`
+      value: `${Math.round(this.currentCalories)}千卡`
     })
   }
 
@@ -707,37 +860,181 @@ struct MainTabs {
   }
 
   private async loadBodyData() {
-    // 加载身体数据
-    this.currentHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'height', 170) as number
-    this.currentWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight', 60) as number
-    this.userAge = await preferencesUtil.getPreferenceValue('steps_ohos', 'age', 25) as number
-    this.userGender = await preferencesUtil.getPreferenceValue('steps_ohos', 'gender', 'male') as string
-    
-    // 计算BMI
+    // 使用统一的数据管理服务加载身体数据
+    const metrics = await userDataManager.loadMetrics()
+    this.currentHeight = metrics.height
+    this.currentWeight = metrics.weight
+    this.userAge = metrics.age
+    this.userGender = metrics.gender
+    this.calculateBodyMetrics()
+  }
+
+  private async syncLatestHeightFromDB(): Promise<void> {
+    // 从数据库直接读取最新身高，立即更新UI（不等待全局状态）
+    return new Promise<void>((resolve) => {
+      appDataManager.findBodyRecordByType(AppDataManager.TYPE_HEIGHT, {
+        onDataResult: (type: number, result: Array<BodyRecordModel>, isFirst: boolean): void => {
+          if (type !== AppDataManager.TYPE_HEIGHT) {
+            resolve()
+            return
+          }
+          if (result && result.length > 0) {
+            const sorted = [...result].sort((a, b) => b.time - a.time)
+            const latestRecord = sorted[0]
+            let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
+            const heightValue = parseFloat(cleanData)
+            if (!isNaN(heightValue) && heightValue > 0) {
+              // 立即更新UI，确保返回即可见
+              this.currentHeight = heightValue
+              this.calculateBodyMetrics()
+              this.updateMainCard()
+            }
+          }
+          resolve()
+        }
+      }, true) // isReturnFirstData = true，只获取最新一条
+    })
+  }
+
+  private async syncLatestHeight() {
+    // 从数据库获取最新的身高记录，并同步到 preferences 和首页显示
+    appDataManager.findBodyRecordByType(AppDataManager.TYPE_HEIGHT, {
+      onDataResult: async (type: number, result: Array<BodyRecordModel>, isFirst: boolean): Promise<void> => {
+        if (type !== AppDataManager.TYPE_HEIGHT) return
+        if (result && result.length > 0) {
+          const sorted = [...result].sort((a, b) => b.time - a.time)
+          const latestRecord = sorted[0]
+          // 移除可能的单位字符，只保留数字和小数点
+          let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
+          const heightValue = parseFloat(cleanData)
+          if (!isNaN(heightValue) && heightValue > 0) {
+            // 立即更新首页显示，确保返回即可见最新值
+            this.currentHeight = heightValue
+            this.calculateBodyMetrics()
+            this.updateMainCard()
+            // 如与偏好不一致，再同步到全局
+            const storedHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'height', 0) as number
+            if (Math.abs(storedHeight - heightValue) > 0.01) {
+              await userDataManager.updateHeight(heightValue)
+              await userDataManager.refreshMetrics()
+            }
+          }
+        }
+      }
+    }, true) // isReturnFirstData = true，只获取最新一条
+  }
+
+  private async syncLatestWeightFromDB(): Promise<void> {
+    // 从数据库直接读取最新体重，立即更新UI（不等待全局状态）
+    return new Promise<void>((resolve) => {
+      appDataManager.findBodyRecordByType(AppDataManager.TYPE_WEIGHT, {
+        onDataResult: (type: number, result: Array<BodyRecordModel>, isFirst: boolean): void => {
+          if (type !== AppDataManager.TYPE_WEIGHT) {
+            resolve()
+            return
+          }
+          if (result && result.length > 0) {
+            const sorted = [...result].sort((a, b) => b.time - a.time)
+            const latestRecord = sorted[0]
+            let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
+            const weightValue = parseFloat(cleanData)
+            if (!isNaN(weightValue) && weightValue > 0) {
+              // 立即更新UI，确保返回即可见
+              this.currentWeight = weightValue
+              this.calculateBodyMetrics()
+              this.updateMainCard()
+            }
+          }
+          resolve()
+        }
+      }, true) // isReturnFirstData = true，只获取最新一条
+    })
+  }
+
+  private async syncLatestWeight() {
+    // 从数据库获取最新的体重记录，并同步到 preferences 和首页显示
+    appDataManager.findBodyRecordByType(AppDataManager.TYPE_WEIGHT, {
+      onDataResult: async (type: number, result: Array<BodyRecordModel>, isFirst: boolean): Promise<void> => {
+        if (type !== AppDataManager.TYPE_WEIGHT) return
+        if (result && result.length > 0) {
+          const sorted = [...result].sort((a, b) => b.time - a.time)
+          const latestRecord = sorted[0]
+          // 移除可能的单位字符，只保留数字和小数点
+          let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
+          const weightValue = parseFloat(cleanData)
+          if (!isNaN(weightValue) && weightValue > 0) {
+            // 立即更新首页显示，确保返回即可见最新值
+            this.currentWeight = weightValue
+            this.calculateBodyMetrics()
+            this.updateMainCard()
+            // 如与偏好不一致，再同步到全局
+            const storedWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight', 0) as number
+            if (Math.abs(storedWeight - weightValue) > 0.01) {
+              await userDataManager.updateWeight(weightValue)
+              await userDataManager.refreshMetrics()
+            }
+          }
+        }
+      }
+    }, true) // isReturnFirstData = true，只获取最新一条
+  }
+
+  private calculateBodyMetrics(): void {
+    // 使用统一的计算方法计算BMI
+    if (this.currentHeight > 0) {
+      this.updateCardMetrics(MainCardManager.STEPS_BODY_DATA, {
+        subtitle: '身高',
+        value: `${this.currentHeight.toFixed(1)}厘米`
+      })
+    } else {
+      this.updateCardMetrics(MainCardManager.STEPS_BODY_DATA, {
+        subtitle: '身高',
+        value: '未记录'
+      })
+    }
+    if (this.currentWeight > 0) {
+      this.updateCardMetrics(MainCardManager.STEPS_WEIGHT, {
+        subtitle: '当前',
+        value: `${this.currentWeight.toFixed(1)}公斤`
+      })
+    } else {
+      this.updateCardMetrics(MainCardManager.STEPS_WEIGHT, {
+        subtitle: '当前',
+        value: '未记录'
+      })
+    }
+
     if (this.currentHeight > 0 && this.currentWeight > 0) {
-      const heightInMeters = this.currentHeight / 100
-      this.bmi = this.currentWeight / (heightInMeters * heightInMeters)
-      
-      // 判断BMI状态
-      if (this.bmi < 18.5) {
-        this.bmiStatus = '过轻'
-      } else if (this.bmi < 24) {
-        this.bmiStatus = '正常'
-      } else if (this.bmi < 28) {
-        this.bmiStatus = '偏胖'
-      } else {
-        this.bmiStatus = '肥胖'
-      }
+      const bmiResult = userDataManager.calculateBMI(this.currentHeight, this.currentWeight)
+      this.bmi = bmiResult.value
+      this.bmiStatus = bmiResult.status
+    } else {
+      this.bmi = 0
+      this.bmiStatus = ''
     }
     
-    // 计算基础代谢率
+    // 使用统一的计算方法计算基础代谢率
     if (this.currentHeight > 0 && this.currentWeight > 0 && this.userAge > 0) {
-      if (this.userGender === 'male') {
-        this.basalMetabolism = 10 * this.currentWeight + 6.25 * this.currentHeight - 5 * this.userAge + 5
-      } else {
-        this.basalMetabolism = 10 * this.currentWeight + 6.25 * this.currentHeight - 5 * this.userAge - 161
-      }
+    this.basalMetabolism = userDataManager.calculateBMR(
+        this.currentHeight, 
+        this.currentWeight, 
+        this.userAge, 
+        this.userGender
+      )
+    } else {
+      this.basalMetabolism = 0
     }
+
+    // 避免对象扩展运算符带来的 ArkTS 限制，直接赋值
+    this.cardMetrics[MainCardManager.STEPS_BODY_DATA] = {
+      subtitle: '身高',
+      value: this.currentHeight > 0 ? `${this.currentHeight.toFixed(1)}厘米` : '未记录'
+    }
+    this.cardMetrics[MainCardManager.STEPS_WEIGHT] = {
+      subtitle: '当前',
+      value: this.currentWeight > 0 ? `${this.currentWeight.toFixed(1)}公斤` : '未记录'
+    }
+    this.updateMainCard()
   }
 
   private navigateToGoalDetail(goalKey: string) {
@@ -998,18 +1295,29 @@ struct MainTabs {
           .fontWeight(500)
           .fontColor('#333333')
 
-        Text(config.value)
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#222222')
-          .margin({ top: 10 })
+        Row() {
+          Text(config.value)
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#222222')
 
-        if (config.unit && config.unit.length > 0) {
-          Text(config.unit)
-            .fontSize(12)
-            .fontColor(config.noteColor ?? '#666666')
-            .margin({ top: 4 })
+          if (config.unit && config.unit.length > 0) {
+            Text(config.unit)
+              .fontSize(12)
+              .fontColor(config.noteColor ?? '#666666')
+              .margin({ left: 4 })
+          } else {
+            // 即使没有单位，也保留占位空间，确保卡片高度一致
+            Blank()
+              .width(0)
+              .height(20) // 与数字高度保持一致
+          }
         }
+        .width('100%')
+        .height(32) // 固定高度，确保所有卡片大小一致
+        .justifyContent(FlexAlign.Start)
+        .alignItems(VerticalAlign.Center)
+        .margin({ top: 10 })
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
@@ -1029,6 +1337,7 @@ struct MainTabs {
       .margin({ left: 10 })
     }
     .width('100%')
+    .height(88) // 固定卡片高度，确保统一
     .padding({ top: 12, bottom: 12, left: 18, right: 18 })
     .backgroundColor('#FFFFFF')
     .borderRadius(16)
@@ -1143,21 +1452,21 @@ struct MainTabs {
                   Row(){
                     ForEach(this.line1, (item: MainCardData, index: number) => {
                       MainCardView({formData:item})
-                    })
+                    }, (item: MainCardData) => `${item.item}-${item.index}`)
                   }.width('92%').height(this.mainCardH).margin({top:10})
                 }//第一行MainCard
                 if(this.line2.length>0){//第二行MainCard
                   Row(){
                     ForEach(this.line2, (item: MainCardData, index: number) => {
                       MainCardView({formData:item})
-                    })
+                    }, (item: MainCardData) => `${item.item}-${item.index}`)
                   }.width('92%').height(this.mainCardH).margin({top:10})
                 }//第二行MainCard
                 if(this.line3.length>0){//第三行MainCard
                   Row(){
                     ForEach(this.line3, (item: MainCardData, index: number) => {
                       MainCardView({formData:item})
-                    })
+                    }, (item: MainCardData) => `${item.item}-${item.index}`)
                   }.width('92%').height(this.mainCardH).margin({top:10})
                 }//第三行MainCard
 
@@ -1249,9 +1558,23 @@ struct MainTabs {
                   .scrollBar(BarState.Off)
                   .backgroundColor('#FFFFFF')
                 }.tabBar(this.subTabBuilder(4,'登山'))
+                TabContent() {// 第六个subTab6页面 start
+                  Scroll(this.sportSubScrollers[5]) {
+                    Column() {
+                      SubFragment({formData:this.subFragmentDataRide})
+                    }
+                    .width('100%')
+                    .backgroundColor('#FFFFFF')
+                  }
+                  .width('100%')
+                  .align(Alignment.Top)
+                  .scrollBar(BarState.Off)
+                  .backgroundColor('#FFFFFF')
+                }.tabBar(this.subTabBuilder(5,'骑行'))
               }
               .barHeight('6%')
-              .barWidth('93%')
+              .barWidth('100%')
+              .barMode(BarMode.Scrollable)
               .scrollable(true)
               .width('100%')
               .layoutWeight(1)
@@ -1267,17 +1590,32 @@ struct MainTabs {
               Column(){
                 Row(){
                   Row(){
-                    Image(this.userImg).alt($r('app.media.user_image')).width(60).height(60).borderRadius(15)
+                    Image(this.userImg).alt(this.userName === '未登录用户' ? $r('app.media.default_user_icon') : $r('app.media.user_image')).width(60).height(60).borderRadius(15)
+                      .onClick(() => {
+                        console.info('[MainTabs] ===== 点击头像 =====');
+                        this.handleLoginTap();
+                      })
                     Text(){
                       Span(this.userName).fontSize(18).fontColor('#000000').fontWeight(600)
                       Span('\n')
                       Span(this.userCode).fontSize(13).fontColor('#ff727272')
                     }.textAlign(TextAlign.Start).textAlign(TextAlign.Start).margin({left:10})
+                      .onClick(() => {
+                        console.info('[MainTabs] ===== 点击文本 =====');
+                        this.handleLoginTap();
+                      })
                   }
                   .layoutWeight(1)
+                  .width('100%')
+                  .justifyContent(FlexAlign.Start)
+                  .alignItems(VerticalAlign.Center)
                   .onClick(() => {
-                    console.info('[MainTabs] 点击登录区域, userName:', this.userName);
+                    console.info('[MainTabs] ===== 点击登录区域 Row =====');
+                    console.info('[MainTabs] userName:', this.userName);
+                    console.info('[MainTabs] userCode:', this.userCode);
+                    console.info('[MainTabs] 调用 handleLoginTap');
                     this.handleLoginTap();
+                    console.info('[MainTabs] handleLoginTap 调用完成');
                   })
                   
                   Row(){
@@ -1301,7 +1639,7 @@ struct MainTabs {
                 .height(80)
                 .padding({ left: 12, right: 12, top: 10, bottom: 10 })
                 .margin({top:10})
-                .backgroundColor(this.userName === '未登录用户' ? '#F8F8F8' : 'transparent')
+                .backgroundColor('#FFFFFF')
                 .borderRadius(12)
                 .justifyContent(FlexAlign.SpaceBetween)
                 .alignItems(VerticalAlign.Center)

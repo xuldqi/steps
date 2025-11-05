@@ -17,19 +17,23 @@ export struct CommonTitleView {
   cancel: () => void = () => {
   }
   useSafeTop: boolean = true
+  titleBackgroundColor?: string = undefined
 
   private getSafeTopPadding(): number {
     if (!this.useSafeTop || !EntryAbility.myWindowClass) {
       return 0
     }
     const avoidArea = EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
+    // 与其他页面保持一致：适度扣减，避免标题显得过低
     return Math.max(0, avoidArea.topRect.height - 80)
   }
 
   build() {
     Column(){
       if (this.getSafeTopPadding() > 0) {
-        Blank().height(this.getSafeTopPadding())
+        Blank()
+          .height(this.getSafeTopPadding())
+          .backgroundColor(this.titleBackgroundColor || '#FFFFFF')
       }
 
       Row() {
@@ -56,6 +60,9 @@ export struct CommonTitleView {
       .width('100%')
       .alignItems(VerticalAlign.Center)
       .padding({ left: 16, right: 16 })
+      .backgroundColor(this.titleBackgroundColor || '#FFFFFF')
     }
+    .width('100%')
+    .backgroundColor(this.titleBackgroundColor || '#FFFFFF')
   }
 }

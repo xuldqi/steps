@@ -51,7 +51,7 @@ export class UserDataManager {
       try {
         listener(metrics)
       } catch (error) {
-        Log.e('[UserDataManager] 通知监听者失败:', JSON.stringify(error))
+        Log.e('[UserDataManager] 通知监听者失败: ' + JSON.stringify(error))
       }
     })
   }
@@ -60,8 +60,9 @@ export class UserDataManager {
    * 加载用户身体数据
    */
   async loadMetrics(): Promise<UserMetrics> {
-    if (!preferencesUtil.preferencesMap.has('steps_ohos') && EntryAbility.context) {
-      await preferencesUtil.loadPreference(EntryAbility.context, 'steps_ohos')
+    // preferences 应该在 EntryAbility 中初始化，这里只检查是否已加载
+    if (!preferencesUtil.preferencesMap.has('steps_ohos')) {
+      Log.i('[UserDataManager] preferences尚未初始化，可能影响数据读取')
     }
 
     const height = await preferencesUtil.getPreferenceValue('steps_ohos', 'height', 0) as number
@@ -82,12 +83,26 @@ export class UserDataManager {
     return metrics
   }
 
+  private async updateAndEmit(patch: Partial<UserMetrics>): Promise<void> {
+    const metrics = await this.loadMetrics()
+    const nextMetrics: UserMetrics = {
+      height: patch.height ?? metrics.height ?? 0,
+      weight: patch.weight ?? metrics.weight ?? 0,
+      age: patch.age ?? metrics.age ?? 0,
+      gender: patch.gender ?? metrics.gender ?? 'male',
+      targetWeight: patch.targetWeight ?? metrics.targetWeight
+    }
+    Log.i('[UserDataManager] updateAndEmit patch=' + JSON.stringify(patch) + ', merged=' + JSON.stringify(nextMetrics))
+    this.cachedMetrics = nextMetrics
+    this.emit(nextMetrics)
+  }
+
   /**
    * 更新身高
    */
   async updateHeight(height: number): Promise<void> {
     await preferencesUtil.putPreferenceValue('steps_ohos', 'height', height)
-    await this.refreshMetrics()
+    await this.updateAndEmit({ height })
   }
 
   /**
@@ -95,7 +110,7 @@ export class UserDataManager {
    */
   async updateWeight(weight: number): Promise<void> {
     await preferencesUtil.putPreferenceValue('steps_ohos', 'weight', weight)
-    await this.refreshMetrics()
+    await this.updateAndEmit({ weight })
   }
 
   /**
@@ -103,7 +118,7 @@ export class UserDataManager {
    */
   async updateAge(age: number): Promise<void> {
     await preferencesUtil.putPreferenceValue('steps_ohos', 'age', age)
-    await this.refreshMetrics()
+    await this.updateAndEmit({ age })
   }
 
   /**
@@ -111,7 +126,7 @@ export class UserDataManager {
    */
   async updateGender(gender: string): Promise<void> {
     await preferencesUtil.putPreferenceValue('steps_ohos', 'gender', gender)
-    await this.refreshMetrics()
+    await this.updateAndEmit({ gender })
   }
 
   /**
@@ -120,7 +135,7 @@ export class UserDataManager {
   async updateTargetWeight(targetWeight: number): Promise<void> {
     await preferencesUtil.putPreferenceValue('steps_ohos', 'weight_target', targetWeight)
     await preferencesUtil.putPreferenceValue('steps_ohos', 'weight_target_update_time', Date.now())
-    await this.refreshMetrics()
+    await this.updateAndEmit({ targetWeight })
   }
 
   /**
@@ -147,7 +162,7 @@ export class UserDataManager {
     }
 
     await Promise.all(updatesList)
-    await this.refreshMetrics()
+    await this.updateAndEmit(updates)
   }
 
   /**
@@ -156,7 +171,7 @@ export class UserDataManager {
   async refreshMetrics(): Promise<void> {
     const metrics = await this.loadMetrics()
     this.emit(metrics)
-    Log.i('[UserDataManager] 数据已刷新:', JSON.stringify(metrics))
+    Log.i('[UserDataManager] 数据已刷新: ' + JSON.stringify(metrics))
   }
 
   /**
@@ -201,4 +216,3 @@ export class UserDataManager {
 
 // 导出单例
 export const userDataManager = UserDataManager.getInstance()
-

@@ -1,8 +1,11 @@
 import { CommonTitleView } from '../view/CommonTitleView'
-import { router } from '@kit.ArkUI'
+import { router, window } from '@kit.ArkUI'
 import preferencesUtil from '../tools/DataPreUtils'
 import { BodyRecordDialog } from '../view/BodyRecordDialog'
-import { AppDataManager } from '../tools/AppDataManager'
+import appDataManager, { AppDataManager } from '../tools/AppDataManager'
+import { userDataManager } from '../services/UserDataManager'
+import { BodyRecordModel } from '../appdata/Model'
+import EntryAbility from '../entryability/EntryAbility'
 
 interface BmiStatusInfo {
   label: string
@@ -63,26 +66,134 @@ struct BodyMassIndexPage {
 
   private heightDialog?: CustomDialogController
   private weightDialog?: CustomDialogController
+  private metricsUnsubscribe: (() => void) | null = null
 
   onPageShow(): void {
-    this.loadInitialData()
+    // 进入时主动刷新一次，避免返回页面显示旧值
+    void (async (): Promise<void> => {
+      await userDataManager.refreshMetrics()
+      await this.loadInitialData()
+    })()
+    // 设置沉浸式状态栏和标题栏
+    this.setImmersiveStatusBar()
+  }
+
+  aboutToDisappear(): void {
+    // 恢复默认状态栏
+    this.restoreStatusBar()
+    if (this.metricsUnsubscribe) {
+      this.metricsUnsubscribe()
+      this.metricsUnsubscribe = null
+    }
+  }
+
+  aboutToAppear(): void {
+    // 订阅全局 metrics，确保别处修改能立刻反映
+    this.metricsUnsubscribe?.()
+    this.metricsUnsubscribe = userDataManager.subscribe((m) => {
+      if (typeof m.height === 'number' && m.height > 0) {
+        this.heightInput = m.height
+      }
+      if (typeof m.weight === 'number' && m.weight > 0) {
+        this.weightInput = m.weight
+      }
+      this.calculateBmi(false)
+    })
+  }
+
+  
+
+  private setImmersiveStatusBar(): void {
+    if (EntryAbility.myWindowClass) {
+      EntryAbility.myWindowClass.setWindowSystemBarProperties({
+        statusBarColor: '#F5F5F5',
+        statusBarContentColor: '#000000'
+      })
+    }
+  }
+
+  private restoreStatusBar(): void {
+    if (EntryAbility.myWindowClass) {
+      EntryAbility.myWindowClass.setWindowSystemBarProperties({
+        statusBarColor: '#00000000',
+        statusBarContentColor: '#000000'
+      })
+    }
   }
 
   private async loadInitialData() {
-    const savedHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'bmi_last_height', 0) as number
-    const savedWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'bmi_last_weight', 0) as number
-    const lastCalculated = await preferencesUtil.getPreferenceValue('steps_ohos', 'bmi_last_calculated', false) as boolean
-    const defaultHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'height', 0) as number
-    const defaultWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight', 0) as number
+    // 从数据库同步最新身高和体重数据
+    await Promise.all([
+      this.syncLatestHeight(),
+      this.syncLatestWeight()
+    ])
 
-    this.heightInput = savedHeight > 0 ? savedHeight : defaultHeight
-    this.weightInput = savedWeight > 0 ? savedWeight : defaultWeight
+    // 等待一小段时间确保数据已同步到 preferences
+    await new Promise<void>((resolve: () => void) => setTimeout(resolve, 100))
 
-    if (lastCalculated && this.heightInput > 0 && this.weightInput > 0) {
-      this.calculateBmi(false)
-    } else {
-      this.showResult = false
-    }
+    // 使用统一的数据管理服务加载最新数据
+    const metrics = await userDataManager.loadMetrics()
+    
+    // 直接使用最新的真实数据，不使用缓存
+    this.heightInput = metrics.height
+    this.weightInput = metrics.weight
+
+    // 自动计算BMI
+    this.calculateBmi(false)
+  }
+
+  private async syncLatestHeight(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      // 从数据库获取最新的身高记录，并同步到 preferences
+      appDataManager.findBodyRecordByType(AppDataManager.TYPE_HEIGHT, {
+        onDataResult: async (type: number, result: Array<BodyRecordModel>, isFirst: boolean): Promise<void> => {
+          if (type !== AppDataManager.TYPE_HEIGHT) {
+            resolve()
+            return
+          }
+          if (result && result.length > 0) {
+            const sorted = [...result].sort((a, b) => b.time - a.time)
+            const latestRecord = sorted[0]
+            let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
+            const heightValue = parseFloat(cleanData)
+            if (!isNaN(heightValue) && heightValue > 0) {
+              const currentHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'height', 0) as number
+              if (Math.abs(currentHeight - heightValue) > 0.01) {
+                await userDataManager.updateHeight(heightValue)
+              }
+            }
+          }
+          resolve()
+        }
+      }, true) // isReturnFirstData = true，只获取最新一条
+    })
+  }
+
+  private async syncLatestWeight(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      // 从数据库获取最新的体重记录，并同步到 preferences
+      appDataManager.findBodyRecordByType(AppDataManager.TYPE_WEIGHT, {
+        onDataResult: async (type: number, result: Array<BodyRecordModel>, isFirst: boolean): Promise<void> => {
+          if (type !== AppDataManager.TYPE_WEIGHT) {
+            resolve()
+            return
+          }
+          if (result && result.length > 0) {
+            const sorted = [...result].sort((a, b) => b.time - a.time)
+            const latestRecord = sorted[0]
+            let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
+            const weightValue = parseFloat(cleanData)
+            if (!isNaN(weightValue) && weightValue > 0) {
+              const currentWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight', 0) as number
+              if (Math.abs(currentWeight - weightValue) > 0.01) {
+                await userDataManager.updateWeight(weightValue)
+              }
+            }
+          }
+          resolve()
+        }
+      }, true) // isReturnFirstData = true，只获取最新一条
+    })
   }
 
   private saveInputs() {
@@ -105,10 +216,15 @@ struct BodyMassIndexPage {
         cancel: () => {
           this.heightDialog?.close()
         },
-        confirm: (value: number, _type: number) => {
+        confirm: async (value: number, _type: number) => {
           this.heightDialog?.close()
           this.heightInput = Math.round(value * 10) / 10
           this.saveInputs()
+          // 自动重新计算BMI
+          this.calculateBmi(true)
+          // 同步全局并广播
+          await userDataManager.updateHeight(this.heightInput)
+          await userDataManager.refreshMetrics()
         }
       }),
       autoCancel: true
@@ -131,10 +247,15 @@ struct BodyMassIndexPage {
         cancel: () => {
           this.weightDialog?.close()
         },
-        confirm: (value: number, _type: number) => {
+        confirm: async (value: number, _type: number) => {
           this.weightDialog?.close()
           this.weightInput = Math.round(value * 10) / 10
           this.saveInputs()
+          // 自动重新计算BMI
+          this.calculateBmi(true)
+          // 同步全局并广播
+          await userDataManager.updateWeight(this.weightInput)
+          await userDataManager.refreshMetrics()
         }
       }),
       autoCancel: true
@@ -194,7 +315,8 @@ struct BodyMassIndexPage {
         data1: { str1: '身体质量指数 BMI' },
         cancel: () => {
           router.back()
-        }
+        },
+        titleBackgroundColor: '#F5F5F5'
       })
 
       Scroll() {
@@ -208,11 +330,16 @@ struct BodyMassIndexPage {
         }
         .width('100%')
         .alignItems(HorizontalAlign.Center)
+        .padding({ top: 0 })
       }
       .width('100%')
       .layoutWeight(1)
       .backgroundColor('#F5F5F5')
+      .align(Alignment.Top)
     }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('#F5F5F5')
   }
 
   @Builder
@@ -224,30 +351,14 @@ struct BodyMassIndexPage {
         .fontColor('#333333')
         .alignSelf(ItemAlign.Start)
 
-      this.buildInputRow('身高（厘米）', this.formatValue(this.heightInput), () => {
-        this.openHeightDialog()
-      }, true)
+      this.buildHeightInputRow()
+      this.buildWeightInputRow()
 
-      this.buildInputRow('体重（公斤）', this.formatValue(this.weightInput), () => {
-        this.openWeightDialog()
-      }, false)
-
-      Text('注：BMI 计算公式为体重(kg) ÷ 身高²(m²)。若未录入过身高、体重，可在本页直接填写后计算，结果将自动保存。')
+      Text('注：BMI 计算公式为体重(kg) ÷ 身高²(m²)。若未录入过身高、体重，可在本页直接填写，结果将自动计算并保存。')
         .fontSize(12)
         .fontColor('#999999')
         .lineHeight(18)
         .margin({ top: 12 })
-
-      Button('计算')
-        .backgroundColor('#0cc291')
-        .fontColor('#FFFFFF')
-        .height(44)
-        .borderRadius(22)
-        .margin({ top: 20 })
-        .width('100%')
-        .onClick(() => {
-          this.calculateBmi()
-        })
     }
     .width('92%')
     .padding(24)
@@ -258,21 +369,21 @@ struct BodyMassIndexPage {
   }
 
   @Builder
-  private buildInputRow(label: string, value: string, onTap: () => void, showSeparator: boolean) {
+  private buildHeightInputRow() {
     Column() {
       Row() {
         Column() {
-          Text(label)
+          Text('身高（厘米）')
             .fontSize(14)
             .fontColor('#666666')
             .alignSelf(ItemAlign.Start)
-          Text(value)
+          Text(this.heightInput > 0 ? this.heightInput.toFixed(1) : '选择')
             .fontSize(18)
             .fontWeight(500)
-            .fontColor(value === '选择' ? '#bbbbbb' : '#222222')
+            .fontColor(this.heightInput > 0 ? '#222222' : '#bbbbbb')
             .margin({ top: 6 })
         }
-        Blank().layoutWeight(1)
+        .layoutWeight(1)
         Image($r('app.media.right_point'))
           .width(16)
           .height(16)
@@ -281,15 +392,42 @@ struct BodyMassIndexPage {
       .width('100%')
       .padding({ top: 16, bottom: 16 })
       .onClick(() => {
-        onTap()
+        this.openHeightDialog()
       })
 
-      if (showSeparator) {
-        Row()
-          .width('100%')
-          .height(1)
-          .backgroundColor('#f0f0f0')
+      Row()
+        .width('100%')
+        .height(1)
+        .backgroundColor('#f0f0f0')
+    }
+  }
+
+  @Builder
+  private buildWeightInputRow() {
+    Column() {
+      Row() {
+        Column() {
+          Text('体重（公斤）')
+            .fontSize(14)
+            .fontColor('#666666')
+            .alignSelf(ItemAlign.Start)
+          Text(this.weightInput > 0 ? this.weightInput.toFixed(1) : '选择')
+            .fontSize(18)
+            .fontWeight(500)
+            .fontColor(this.weightInput > 0 ? '#222222' : '#bbbbbb')
+            .margin({ top: 6 })
+        }
+        .layoutWeight(1)
+        Image($r('app.media.right_point'))
+          .width(16)
+          .height(16)
+          .opacity(0.4)
       }
+      .width('100%')
+      .padding({ top: 16, bottom: 16 })
+      .onClick(() => {
+        this.openWeightDialog()
+      })
     }
   }
 

@@ -12,6 +12,11 @@ import { SportRecordDialog } from '../view/SportRecordDialog';
 import { CommonTitleView } from '../view/CommonTitleView';
 import EntryAbility from '../entryability/EntryAbility';
 
+interface SportRouteParams {
+  type?: number;
+  formData?: SubFragmentData;
+}
+
 interface SportTypeStat {
   name: string
   value: number
@@ -39,7 +44,7 @@ interface ChartSeriesData {
 @Entry
 @Component
 struct SportRecordPage {
-  @State currentType: number = 0
+  @State currentType: number = 1
   @State data: Array<SportModel> = new Array<SportModel>();
   
   // 统计相关状态
@@ -71,17 +76,36 @@ struct SportRecordPage {
   @State sportTypeStats: Array<SportTypeStat> = []
   private initialized: boolean = false
 
+  private initTypeFromRoute(): void {
+    const raw = router.getParams() as SportRouteParams | undefined;
+    let incomingType: number | undefined = undefined
+    if (raw) {
+      const rawTypeNum = raw.type
+      if (typeof rawTypeNum === 'number') {
+        incomingType = rawTypeNum
+      } else {
+        const fd = raw.formData
+        if (fd !== undefined && typeof fd.type === 'number') {
+          incomingType = fd.type
+        }
+      }
+    }
+    if (incomingType !== undefined) {
+      this.currentType = incomingType
+      Log.i('SportRecordPage initTypeFromRoute: ' + this.currentType)
+    }
+  }
+
+  aboutToAppear(): void {
+    // 在首次构建前解析类型，保证标题初次渲染即正确
+    this.initTypeFromRoute()
+  }
+
 
   onPageShow(): void {
     if (!this.initialized) {
-      let params = router.getParams() as SubFragmentData;
-      if (params && params.type !== undefined) {
-        this.currentType = params.type
-        Log.i('SportRecordPage Received: ' + this.currentType);
-      } else {
-        this.currentType = 0
-        Log.i('SportRecordPage Using default type: ' + this.currentType);
-      }
+      // aboutToAppear 已设置过类型，这里仅记录
+      Log.i('SportRecordPage onPageShow using type: ' + this.currentType)
       this.selectedMetric = '运动时长'
       this.timeRange = '周'
       this.curOffset = 0
@@ -433,90 +457,36 @@ struct SportRecordPage {
   }
 
   build() {
-    Stack() {
-      Column() {
-        // 顶部标题栏
-        Row() {
-          Image($r('app.media.back_btn_dark'))
-            .width(20)
-            .height(20)
-            .onClick(() => {
-              router.back()
-            })
-          
-          Row() {
-            Text(Utils.getSportRecordTitle(this.currentType))
-              .fontSize(18)
-              .fontWeight(500)
-              .fontColor('#333333')
-              .textAlign(TextAlign.Center)
-              .margin({ right: 4 })
-            Text(this.showSportTypeSelector ? '▲' : '▼')
-              .fontSize(12)
-              .fontColor('#666666')
+    Column() {
+      CommonTitleView({
+        data1: { str1: this.getPageTitle() },
+        cancel: () => { router.back() },
+        titleBackgroundColor: '#F5F5F5',
+        useSafeTop: true
+      })
+
+      Scroll() {
+        Column() {
+          // 趋势查看区域
+          this.buildTrendSection()
+
+          // 信息概览
+          this.buildInfoOverview()
+
+          // 运动次数占比（仅全部运动时显示）
+          if (this.currentType === 0) {
+            this.buildSportTypeStats()
           }
-          .alignItems(VerticalAlign.Center)
-          .justifyContent(FlexAlign.Center)
-          .layoutWeight(1)
-          .height(40)
-          .onClick(() => {
-            this.toggleSportTypeSelector()
-          })
+
+          // 添加运动按钮（按需求隐藏）
+          // this.buildAddSportButton()
         }
         .width('100%')
-        .padding({ top: this.getSafeTopPadding() + 16, bottom: 16, left: 20, right: 20 })
-        .backgroundColor('#F5F5F5')
-        .border({ width: { bottom: 1 }, color: '#E5E5E5' })
-        
-        Scroll() {
-          Column() {
-            // 趋势查看区域
-            this.buildTrendSection()
-            
-            // 信息概览
-            this.buildInfoOverview()
-            
-            // 运动次数占比（仅全部运动时显示）
-            if (this.currentType === 0) {
-              this.buildSportTypeStats()
-            }
-            
-            // 添加运动按钮
-            this.buildAddSportButton()
-          }
-          .width('100%')
-          .padding({ left: 20, right: 20 })
-        }
-        .layoutWeight(1)
-        .backgroundColor('#F5F5F5')
+        .padding({ left: 20, right: 20, top: 0 })
+        .margin({ top: -180 })
       }
-      .width('100%')
-      .height('100%')
+      .layoutWeight(1)
       .backgroundColor('#F5F5F5')
-
-      if (this.showSportTypeSelector) {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('#33000000')
-          .onClick(() => {
-            this.showSportTypeSelector = false
-          })
-      }
-
-      if (this.showSportTypeSelector) {
-        Column() {
-          SportTypeDialog({
-            currentType: this.currentType,
-            onSelect: (type: number) => {
-              this.onSportTypeSelected(type)
-            }
-          })
-        }
-        .width('88%')
-        .align(Alignment.TopStart)
-        .margin({ top: this.getSportTypeSelectorTopMargin(), left: 20, right: 20 })
-      }
     }
     .width('100%')
     .height('100%')
@@ -536,11 +506,19 @@ struct SportRecordPage {
       return 0
     }
     const avoidArea = EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
-    return Math.max(0, avoidArea.topRect.height - 80)
+    return Math.max(0, avoidArea.topRect.height)
   }
 
   private getSportTypeSelectorTopMargin(): number {
     return this.getSafeTopPadding() + 72
+  }
+
+  private getPageTitle(): string {
+    if (this.currentType === 0) {
+      return '全部记录'
+    }
+    const name = Utils.getSportRecordName(this.currentType)
+    return name + '记录'
   }
 
   @Builder
@@ -554,22 +532,51 @@ struct SportRecordPage {
             .fontColor('#333333')
             .layoutWeight(1)
 
-          Row() {
-            Text(this.selectedMetric)
-              .fontSize(14)
-              .fontColor('#333333')
-            Text('▼')
-              .fontSize(12)
-              .fontColor('#333333')
-              .margin({ left: 4 })
+          // 将按钮与下拉放入同一局部 Stack，使下拉锚定到按钮下方
+          Stack() {
+            Row() {
+              Text(this.selectedMetric)
+                .fontSize(14)
+                .fontColor('#333333')
+              Text('▼')
+                .fontSize(12)
+                .fontColor('#333333')
+                .margin({ left: 4 })
+            }
+            .alignItems(VerticalAlign.Center)
+            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+            .backgroundColor('#F4F4F4')
+            .borderRadius(16)
+            .onClick(() => {
+              this.toggleMetricSelector()
+            })
+
+            if (this.showMetricSelector) {
+              Column() {
+                ForEach(this.metricOptions, (option: string, index: number) => {
+                  Text(option)
+                    .fontSize(14)
+                    .fontColor(this.selectedMetric === option ? '#333333' : '#999999')
+                    .fontWeight(this.selectedMetric === option ? 600 : 400)
+                    .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+                    .width('100%')
+                    .backgroundColor(this.selectedMetric === option ? '#F3F7F5' : '#FFFFFF')
+                    .textAlign(TextAlign.Start)
+                    .onClick(() => {
+                      this.onMetricSelect(option)
+                    })
+                }, (option: string, index: number) => `metric-${index}`)
+              }
+              .width(140)
+              .backgroundColor('#FFFFFF')
+              .borderRadius(12)
+              .border({ width: 1, color: '#EAEAEA' })
+              .align(Alignment.TopStart)
+              // 紧贴按钮底部展开
+              .margin({ top: 40 })
+            }
           }
-          .alignItems(VerticalAlign.Center)
-          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-          .backgroundColor('#F4F4F4')
-          .borderRadius(16)
-          .onClick(() => {
-            this.toggleMetricSelector()
-          })
+          .alignSelf(ItemAlign.End)
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
@@ -653,29 +660,7 @@ struct SportRecordPage {
       .borderRadius(12)
       .margin({ bottom: 12 })
 
-      if (this.showMetricSelector) {
-        Column() {
-          ForEach(this.metricOptions, (option: string, index: number) => {
-            Text(option)
-              .fontSize(14)
-              .fontColor(this.selectedMetric === option ? '#333333' : '#999999')
-              .fontWeight(this.selectedMetric === option ? 600 : 400)
-              .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-              .width('100%')
-              .backgroundColor(this.selectedMetric === option ? '#F3F7F5' : '#FFFFFF')
-              .textAlign(TextAlign.Start)
-              .onClick(() => {
-                this.onMetricSelect(option)
-              })
-          }, (option: string, index: number) => `metric-${index}`)
-        }
-        .width(140)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(12)
-        .border({ width: 1, color: '#EAEAEA' })
-        .align(Alignment.TopEnd)
-        .margin({ top: 62, right: 32 })
-      }
+      // 下拉已移动到按钮局部 Stack 内部，避免在卡片中间展开
     }
     .width('100%')
   }
@@ -865,3 +850,4 @@ struct SportRecordPage {
   }
 
 }
+

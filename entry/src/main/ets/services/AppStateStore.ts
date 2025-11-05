@@ -168,6 +168,14 @@ export class AppStateStore {
   }
 
   /**
+   * 在未登录等场景下也需要触发订阅者刷新（例如本地昵称变更）。
+   * 不修改任何状态，仅广播当前 state。
+   */
+  forceEmit(): void {
+    this.emit();
+  }
+
+  /**
    * 更新今日步数快照
    */
   updateTodaySnapshot(partial: Partial<StepSnapshot>): void {
@@ -187,9 +195,12 @@ export class AppStateStore {
     
     this.recalculateTaskStatuses(nextSnapshot.steps);
     
-    // 自动同步到云端
+    // 自动同步到云端（异步处理，捕获错误避免未处理的 Promise 拒绝）
     if (this.getUserId()) {
-      this.syncService.syncTodaySteps(this.getUserId()!, nextSnapshot);
+      this.syncService.syncTodaySteps(this.getUserId()!, nextSnapshot).catch((error) => {
+        // 记录错误但不阻止状态更新
+        console.error('[AppStateStore] 同步今日步数到云端失败:', error);
+      });
     }
   }
 

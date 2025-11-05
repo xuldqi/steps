@@ -80,8 +80,8 @@ export class Utils{
     Log.i('toMainCardPage called with type: ' + type)
     switch (type){
       case 1:
-        Log.i('Navigating to StepTrendPage for walking distance')
-        router.pushUrl({ url: 'pages/StepTrendPage' })
+        Log.i('Navigating to DistanceTrendPage for walking distance')
+        router.pushUrl({ url: 'pages/DistanceTrendPage' })
         return
       case 2:
         router.pushUrl({ url: 'pages/ChartPage' })
@@ -96,7 +96,8 @@ export class Utils{
         router.pushUrl({ url: 'pages/BodyDataPage' })
         return
       case 6:
-        router.pushUrl({ url: 'pages/WeightRecordPage' })
+        // 体重趋势
+        router.pushUrl({ url: 'pages/WeightTrendPage' })
         return
     }
     return
@@ -136,6 +137,12 @@ export class Utils{
         return '徒步'
       case 5:
         return '登山'
+      case 6:
+        return '骑行'
+      case 7:
+        return '瑜伽'
+      case 8:
+        return '跳绳'
     }
     return '室外跑'
   }
@@ -154,6 +161,12 @@ export class Utils{
         return '徒步记录'
       case 5:
         return '登山记录'
+      case 6:
+        return '骑行记录'
+      case 7:
+        return '瑜伽记录'
+      case 8:
+        return '跳绳记录'
     }
     return '所有记录'
   }
@@ -167,6 +180,7 @@ export class Utils{
         { name: '健走记录', value: 0,type:3 },
         { name: '徒步记录', value: 0,type:4 },
         { name: '登山记录', value: 0,type:5 },
+        { name: '骑行记录', value: 0,type:6 }
       ]
     return list;
   }
@@ -262,6 +276,8 @@ export class Utils{
         return $r('app.media.sport_walk_alone')
       case 5:
         return $r('app.media.sport_climb')
+      case 6:
+        return $r('app.media.sport_ride')
     }
     return $r('app.media.sport_indoor_run')
   }
@@ -278,6 +294,8 @@ export class Utils{
         return '徒步'
       case 5:
         return '登山'
+      case 6:
+        return '骑行'
     }
     return '室内跑'
   }

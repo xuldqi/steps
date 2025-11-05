@@ -15,7 +15,7 @@ export interface SubFragmentData {
 @Component
 export struct SubFragment {
 
-  @State formData: SubFragmentData = {
+  @Prop formData: SubFragmentData = {
     type:1,
     curTarget:'',
     subTopTitle:'', // 当前步数
