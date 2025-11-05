@@ -73,8 +73,12 @@ export struct BodyRecordList {
             .justifyContent(FlexAlign.Start)
           }.padding({left:10,right:10,top:10})
         })
-      }.listDirection(Axis.Vertical).alignListItem(ListItemAlign.Start)
-      .height('100%').width('100%').visibility(this.data.length > 0? Visibility.Visible:Visibility.Hidden)
+      }
+      .listDirection(Axis.Vertical)
+      .alignListItem(ListItemAlign.Start)
+      .width('100%')
+      .height('100%')
+      .visibility(this.data.length > 0? Visibility.Visible:Visibility.Hidden)
 
       Image($r('app.media.no_data'))
         .width(70)

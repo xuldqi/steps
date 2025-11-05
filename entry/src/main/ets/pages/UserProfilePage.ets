@@ -105,6 +105,8 @@ struct UserProfilePage {
   async onPageShow(): Promise<void> {
     // 设置沉浸式状态栏（灰色背景）
     this.setImmersiveStatusBar()
+    // 先刷新 userDataManager 的数据，确保获取最新的目标体重
+    await userDataManager.refreshMetrics()
     await this.loadUserInfo()
     await this.loadBodyData()
 
@@ -221,13 +223,22 @@ struct UserProfilePage {
       this.userHeight = updatedHeight
     }
 
-    // 加载目标体重
-    const targetWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight_target', 0) as number
-    Log.i('[UserProfilePage] loadBodyData: 目标体重=' + targetWeight)
-    if (targetWeight > 0) {
-      this.targetWeight = targetWeight
-    } else if (!Number.isNaN(updatedTarget) && updatedTarget > 0) {
+    // 加载目标体重：优先使用 userDataManager 中的 targetWeight（更权威），如果没有则使用 weight_target preference
+    if (!Number.isNaN(updatedTarget) && updatedTarget > 0) {
       this.targetWeight = updatedTarget
+      // 同步到 weight_target preference，确保体重趋势页面也能获取到
+      await preferencesUtil.putPreferenceValue('steps_ohos', 'weight_target', updatedTarget)
+      Log.i('[UserProfilePage] loadBodyData: 从 userDataManager 加载目标体重=' + updatedTarget + '，已同步到 weight_target')
+    } else {
+      // 如果 userDataManager 中没有，尝试从 weight_target preference 读取（兼容旧数据）
+      const targetWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight_target', 0) as number
+      Log.i('[UserProfilePage] loadBodyData: 从 weight_target preference 加载目标体重=' + targetWeight)
+      if (targetWeight > 0) {
+        this.targetWeight = targetWeight
+        // 同步到 userDataManager，确保数据一致性
+        await userDataManager.updateTargetWeight(targetWeight)
+        Log.i('[UserProfilePage] loadBodyData: 已同步到 userDataManager')
+      }
     }
 
     Log.i('[UserProfilePage] loadBodyData: 第二阶段 gender=' + this.gender + ', age=' + this.age + ', height=' + this.userHeight + ', target=' + this.targetWeight)
@@ -524,15 +535,15 @@ struct UserProfilePage {
             if (this.tempNickname.length > 0 && this.tempNickname.length <= 20) {
               try {
                 // 保存本地昵称（优先使用本地昵称）
+                // 同时保存到 userName 和 userNickname，确保兼容性
                 await preferencesUtil.putPreferenceValue('steps_ohos', 'userNickname', this.tempNickname)
-                // 同时更新userName，确保"我的"页面也能显示
                 await preferencesUtil.putPreferenceValue('steps_ohos', 'userName', this.tempNickname)
                 // 标记已使用本地昵称，不再跟随账号名
                 await preferencesUtil.putPreferenceValue('steps_ohos', 'useLocalNickname', true)
                 // 更新页面显示
                 this.nickname = this.tempNickname
                 this.userName = this.tempNickname
-                // 同步到全局应用状态，确保“我的”页即时刷新
+                // 同步到全局应用状态，确保"我的"页即时刷新
                 this.appStateStore.updateUser({ nickname: this.tempNickname })
                 // 未登录场景也需要通知订阅者读取本地昵称
                 this.appStateStore.forceEmit()
@@ -789,10 +800,12 @@ struct UserProfilePage {
         confirm: async (value: number, _type: number) => {
           dialog.close()
           this.targetWeight = value
+          // 同步到 userDataManager 和 weight_target preference，确保两个地方都更新
           await userDataManager.updateTargetWeight(value)
+          await preferencesUtil.putPreferenceValue('steps_ohos', 'weight_target', value)
           // 保存目标体重更新时间戳，用于体重趋势页面显示
           await preferencesUtil.putPreferenceValue('steps_ohos', 'weight_target_update_time', Date.now())
-          Log.i('[UserProfilePage] openTargetWeightDialog confirm 保存目标=' + value)
+          Log.i('[UserProfilePage] openTargetWeightDialog confirm 保存目标=' + value + '，已同步到 userDataManager 和 weight_target')
           await userDataManager.refreshMetrics()
           const metricsAfterTarget = await userDataManager.loadMetrics()
           this.updateBodyData(metricsAfterTarget)

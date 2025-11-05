@@ -67,6 +67,9 @@ export struct SettingItemView {
         case 7:
           router.pushUrl({ url: 'pages/AdvicePage' })
           return
+        case 8:
+          router.pushUrl({ url: 'pages/MyDataPage' })
+          return
         case 9:
           router.pushUrl({ url: 'pages/SettingPage' })
           return

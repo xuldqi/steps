@@ -18,9 +18,11 @@
   "nodeOptions": {
     "maxOldSpaceSize": 8192,
     "exposeGC": true
+  },
+  "environment": {
+    "DEVECO_SDK_HOME": "/Applications/DevEco-Studio.app/Contents/sdk/default/hms"
   }
 }
-
 
 
 

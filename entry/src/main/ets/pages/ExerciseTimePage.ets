@@ -22,7 +22,7 @@ struct ExerciseTimePage {
   private dates: Array<string> = new Array<string>()
   
   @State seriesRadiusOption: Options = new Options({
-    title: { show: true, text: '最近七天的锻炼时长', right: 20, top: 30 },
+    title: { show: true, text: '分钟', right: 20, top: 30 },
     xAxis: { data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日']},
     series: [{ name: '时长', barStyle: { 
           width: 10,
@@ -45,7 +45,7 @@ struct ExerciseTimePage {
     // 先按日期聚合数据
     const dailyMinutes: Map<string, number> = new Map()
     for (const item of this.exerciseData) {
-      const itemDate = new Date(item.start_time).toISOString().split('T')[0]
+      const itemDate = DateUtils.timeToDateNoYM2(item.start_time)
       const minutes = Math.floor(item.use_time / 60)
       const existing = dailyMinutes.get(itemDate) ?? 0
       dailyMinutes.set(itemDate, existing + minutes)
@@ -174,7 +174,7 @@ struct ExerciseTimePage {
           
           // 目标进度
           TargetProgressView({
-            targetName: '锻炼时长',
+            targetName: '分钟',
             currentValue: this.currentMinutes,
             targetValue: this.targetMinutes,
             unit: '分钟'

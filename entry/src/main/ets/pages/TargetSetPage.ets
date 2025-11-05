@@ -50,6 +50,26 @@ struct TargetSetPage {
     this.sportTarget = tarSport + 'm'
   }
 
+  aboutToDisappear(): void {
+    // 清理所有未完成的延迟保存操作
+    if (this.stepTargetTimeOut) {
+      clearTimeout(this.stepTargetTimeOut)
+      this.stepTargetTimeOut = 0
+    }
+    if (this.weightTargetTimeOut) {
+      clearTimeout(this.weightTargetTimeOut)
+      this.weightTargetTimeOut = 0
+    }
+    if (this.sportTargetTimeOut) {
+      clearTimeout(this.sportTargetTimeOut)
+      this.sportTargetTimeOut = 0
+    }
+    if (this.timeTargetTimeOut) {
+      clearTimeout(this.timeTargetTimeOut)
+      this.timeTargetTimeOut = 0
+    }
+  }
+
 
   build() {
     Column() {

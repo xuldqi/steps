@@ -23,7 +23,7 @@ interface ExerciseProportion {
 @Component
 struct ExerciseRecordPage {
   @State currentType: number = 0 // 0表示全部运动
-  @State currentViewType: string = '运动次数' // 运动时长、运动次数、消耗热量
+  @State currentViewType: string = '运动时长' // 默认运动时长
   @State timeRange: string = '周' // 周、月、年
   @State curOffset: number = 0
   @State top_week: string = ''
@@ -37,9 +37,10 @@ struct ExerciseRecordPage {
   private dates: Array<string> = new Array<string>()
   
   @State seriesRadiusOption: Options = new Options({
-    title: { show: true, text: '最近七天的运动统计', right: 20, top: 30 },
+    title: { show: false },
+    legend: { show: false },
     xAxis: { data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日']},
-    series: [{ name: '运动次数', barStyle: { 
+    series: [{ name: '', barStyle: { 
           width: 10,
           color:'#0cc291',
           borderRadius: [4, 4] },
@@ -56,16 +57,69 @@ struct ExerciseRecordPage {
     // 隐藏瑜伽和跳绳
   ]
 
+  private allSportTypesQueryCount: number = 0 // 用于跟踪所有类型查询的完成数量
+  private allSportTypesData: Array<SportModel> = new Array<SportModel>() // 临时存储所有类型的数据
+  private isLoadingAllTypes: boolean = false // 标记是否正在查询所有类型
+  
   private exerciseCallback: DataCallback<SportModel> = {
     onDataResult: (type: number, result: SportModel[], isReturnFirstData: boolean): void => {
-      this.exerciseData = result
-      this.calculateStatistics()
-      this.updateChart()
+      if (this.isLoadingAllTypes) {
+        // 查询全部运动时，累积所有类型的数据
+        this.allSportTypesQueryCount++
+        // 追加当前类型的数据
+        for (const item of result) {
+          this.allSportTypesData.push(item)
+        }
+        // 如果所有类型都查询完成（5种类型），更新数据
+        if (this.allSportTypesQueryCount >= 5) {
+          // 按 start_time 降序排序（最新的在前）
+          const sorted = [...this.allSportTypesData].sort((a, b) => b.start_time - a.start_time)
+          this.exerciseData = sorted
+          this.allSportTypesData.length = 0 // 清空临时数组
+          this.allSportTypesQueryCount = 0 // 重置计数器
+          this.isLoadingAllTypes = false // 重置标志
+          this.calculateStatistics()
+          this.updateChart()
+        }
+      } else {
+        // 查询单个类型时，按 start_time 降序排序（最新的在前）
+        const sorted = result ? [...result].sort((a, b) => b.start_time - a.start_time) : []
+        this.exerciseData = sorted
+        this.calculateStatistics()
+        this.updateChart()
+      }
     }
   }
 
   onPageShow(): void {
-    this.loadExerciseData()
+    // 设置状态栏为灰色背景
+    if (EntryAbility.myWindowClass) {
+      const sysBarProps: window.SystemBarProperties = {
+        statusBarColor: '#F5F5F5', // 灰色状态栏背景
+        statusBarContentColor: '#000000' // 状态栏内容颜色为黑色
+      }
+      EntryAbility.myWindowClass.setWindowSystemBarProperties(sysBarProps)
+    }
+    
+    // 检查数据是否有变更，如果有则刷新
+    const status = AppDataManager.getSportDataStatus()
+    if (status.isChange) {
+      this.loadExerciseData()
+      AppDataManager.resetSportDataStatus()
+    } else {
+      this.loadExerciseData()
+    }
+  }
+  
+  aboutToDisappear(): void {
+    // 恢复默认状态栏设置（透明）
+    if (EntryAbility.myWindowClass) {
+      const sysBarProps: window.SystemBarProperties = {
+        statusBarColor: '#00000000', // 透明状态栏
+        statusBarContentColor: '#000000' // 状态栏内容颜色为黑色
+      }
+      EntryAbility.myWindowClass.setWindowSystemBarProperties(sysBarProps)
+    }
   }
 
   private loadExerciseData() {
@@ -93,12 +147,16 @@ struct ExerciseRecordPage {
   }
 
   private loadAllSportTypes() {
+    // 重置计数器和临时数组
+    this.allSportTypesQueryCount = 0
+    this.allSportTypesData.length = 0
+    this.isLoadingAllTypes = true // 设置标志
     // 分别查询每种运动类型
     AppDataManager.findSportByType(1, this.exerciseCallback, false) // 室内跑
     AppDataManager.findSportByType(2, this.exerciseCallback, false) // 室外跑
-    AppDataManager.findSportByType(3, this.exerciseCallback, false) // 健走
-    AppDataManager.findSportByType(4, this.exerciseCallback, false) // 徒步
-    AppDataManager.findSportByType(5, this.exerciseCallback, false) // 登山
+    AppDataManager.findSportByType(3, this.exerciseCallback, false) // 骑行
+    AppDataManager.findSportByType(4, this.exerciseCallback, false) // 健走
+    AppDataManager.findSportByType(5, this.exerciseCallback, false) // 爬山
   }
 
   private calculateStatistics() {
@@ -107,12 +165,13 @@ struct ExerciseRecordPage {
     this.totalCalories = 0
 
     for (let item of this.exerciseData) {
+      // use_time 是毫秒，需要除以 1000 得到秒，再除以 3600 得到小时
       this.totalDuration = this.totalDuration + item.use_time
       this.totalCalories = this.totalCalories + parseFloat(item.cal || '0')
     }
     
-    // 转换为小时
-    this.totalDuration = Math.round(this.totalDuration / 3600 * 10) / 10
+    // 转换为小时（use_time 是毫秒，所以除以 3600 * 1000）
+    this.totalDuration = Math.round(this.totalDuration / (3600 * 1000) * 10) / 10
   }
 
   private updateChart() {
@@ -120,28 +179,66 @@ struct ExerciseRecordPage {
     let mm_dates = new Array<string>()
     
     for (let i = 0; i < this.dates.length; i++) {
-      mm_dates.push(DateUtils.getWeek(this.dates[i]))
+      // 解析日期字符串 yyyy/MM/dd (DateUtils.getYMD_ 返回的是 yyyy/MM/dd 格式)
+      const dateParts = this.dates[i].split('/')
+      const year = parseInt(dateParts[0])
+      const month = parseInt(dateParts[1])
+      const day = parseInt(dateParts[2])
+      
+      // 创建 Date 对象用于获取星期几
+      const dateObj = new Date(year, month - 1, day)
+      const weekDayNum = dateObj.getDay()
+      let weekDay = "周一"
+      if (weekDayNum == 0) weekDay = "周日"
+      else if (weekDayNum == 1) weekDay = "周一"
+      else if (weekDayNum == 2) weekDay = "周二"
+      else if (weekDayNum == 3) weekDay = "周三"
+      else if (weekDayNum == 4) weekDay = "周四"
+      else if (weekDayNum == 5) weekDay = "周五"
+      else if (weekDayNum == 6) weekDay = "周六"
+      
+      // 获取月/日格式
+      const monthDay = `${month}/${day.toString().padStart(2, '0')}`
+      // 组合显示：星期几 + 月/日（使用换行符分隔）
+      mm_dates.push(`${weekDay}\n${monthDay}`)
       
       let dayValue = 0
       for (let item of this.exerciseData) {
-        const itemDate = new Date(item.start_time).toISOString().split('T')[0]
+        const itemDate = DateUtils.timeToDateNoYM2(item.start_time) // yyyy/MM/dd
+        // 直接比较日期字符串（都是 yyyy/MM/dd 格式）
         if (this.dates[i] === itemDate) {
           if (this.currentViewType === '运动次数') {
             dayValue = dayValue + 1
           } else if (this.currentViewType === '运动时长') {
-            dayValue = dayValue + Math.floor(item.use_time / 60) // 分钟
+            // use_time 是毫秒，转换为小时（保留1位小数）
+            dayValue = dayValue + item.use_time / (3600 * 1000) // 小时
           } else if (this.currentViewType === '消耗热量') {
             dayValue = dayValue + parseFloat(item.cal || '0')
           }
         }
       }
+      // 如果是运动时长，保留1位小数
+      if (this.currentViewType === '运动时长') {
+        dayValue = parseFloat(dayValue.toFixed(1))
+      }
       mm_datas.push(dayValue)
     }
     
+    // 根据当前视图类型设置单位
+    let unitText = ''
+    if (this.currentViewType === '运动时长') {
+      unitText = '小时'
+    } else if (this.currentViewType === '运动次数') {
+      unitText = '次'
+    } else if (this.currentViewType === '消耗热量') {
+      unitText = '千卡'
+    }
+    
     this.seriesRadiusOption.setVal({
-      title: { show: true, text: `最近七天的${this.currentViewType}`, right: 20, top: 30 },
+      title: { show: true, text: unitText, right: 20, top: 30 },
+      legend: { show: false },
       xAxis: { data: mm_dates },
-      series: [{ name: this.currentViewType, barStyle: { 
+      series: [{ name: '', barStyle: { 
             width: 10,
             color:'#0cc291',
             borderRadius: [4, 4] }, data: mm_datas }]
@@ -177,43 +274,42 @@ struct ExerciseRecordPage {
   build() {
     Stack() {
       Column() {
-        // 标题栏
-        Row() {
-          Image($r('app.media.back_btn_dark'))
-            .width(24)
-            .height(24)
-            .onClick(() => {
-              router.back()
-            })
+        // 标题栏（与首页保持一致的高度和布局）
+        Column() {
+          if (this.getSafeTopPadding() > 0) {
+            Blank()
+              .height(this.getSafeTopPadding())
+              .backgroundColor('#F5F5F5')
+          }
           
           Row() {
-            Text(this.exerciseTypes.find(t => t.id === this.currentType)?.name || '全部运动')
-              .fontSize(18)
-              .fontWeight(500)
-              .fontColor('#333333')
+            Image($r('app.media.back_btn_dark'))
+              .width(28)
+              .height(28)
+              .onClick(() => { router.back() })
             
-            Text('▼')
-              .fontSize(12)
-              .fontColor('#666666')
-              .margin({ left: 4 })
+            Row() {
+              Text(this.exerciseTypes.find(t => t.id === this.currentType)?.name || '全部运动')
+                .fontSize(18)
+                .fontWeight(500)
+                .fontColor('#333333')
+                .onClick(() => { this.showTypeDialog = true })
+              Text('▼')
+                .fontSize(12)
+                .fontColor('#666666')
+                .margin({ left: 4 })
+                .onClick(() => { this.showTypeDialog = true })
+            }
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
           }
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-          .onClick(() => {
-            this.showTypeDialog = true
-          })
-          
-          Text('运动日历>')
-            .fontSize(14)
-            .fontColor('#0cc291')
-            .onClick(() => {
-              // 跳转到运动日历页面
-            })
+          .width('100%')
+          .height(56)
+          .alignItems(VerticalAlign.Center)
+          .padding({ left: 16, right: 16 })
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: this.getSafeTopPadding() + 16, bottom: 16 })
-        .backgroundColor('#FFFFFF')
-        .alignItems(VerticalAlign.Center)
+        .backgroundColor('#F5F5F5')
 
         Scroll() {
           Column() {
@@ -228,11 +324,11 @@ struct ExerciseRecordPage {
               this.buildExerciseProportion()
             }
             
-            // 运动记录列表
-            this.buildExerciseList()
-            
             // 添加运动按钮
             this.buildAddExerciseButton()
+            
+            // 运动记录列表
+            this.buildExerciseList()
           }
           .width('100%')
           .padding({ left: 16, right: 16 })
@@ -273,11 +369,11 @@ struct ExerciseRecordPage {
 
       // 弹窗内容
       Column() {
-        Text('运动类型')
-          .fontSize(16)
-          .fontWeight(500)
+        Text('选择运动类型')
+          .fontSize(18)
+          .fontWeight(600)
           .fontColor('#333333')
-          .margin({ bottom: 16 })
+          .margin({ bottom: 12 })
 
         Grid() {
           ForEach(this.exerciseTypes, (type: ExerciseType) => {
@@ -288,13 +384,15 @@ struct ExerciseRecordPage {
                   .height(32)
                   .margin({ bottom: 6 })
                 Text(type.name)
-                  .fontSize(11)
+                  .fontSize(12)
                   .fontColor(this.currentType === type.id ? '#0cc291' : '#666666')
               }
               .width('100%')
+              .height(70)
               .padding(8)
               .backgroundColor(this.currentType === type.id ? '#E8F5E8' : '#F8F8F8')
-              .borderRadius(6)
+              .borderRadius(16)
+              .justifyContent(FlexAlign.Center)
               .onClick(() => {
                 this.onExerciseTypeChange(type.id)
                 this.showTypeDialog = false
@@ -306,14 +404,16 @@ struct ExerciseRecordPage {
         .rowsGap(8)
         .columnsGap(8)
       }
-      .width('90%')
-      .padding(16)
+      .width('80%')
+      .height(260)
+      .padding({ top: 16, bottom: 16, left: 20, right: 20 })
       .backgroundColor('#FFFFFF')
-      .borderRadius(12)
-      .align(Alignment.Bottom)
+      .borderRadius(16)
+      .align(Alignment.Center)
     }
     .width('100%')
     .height('100%')
+    .alignContent(Alignment.Center)
   }
 
   @Builder buildTrendView() {
@@ -384,7 +484,7 @@ struct ExerciseRecordPage {
               this.onViewTypeChange(viewType)
             })
         })
-      }
+      }.justifyContent(FlexAlign.Center)
       .width('100%')
       .margin({ bottom: 16 })
 
@@ -443,7 +543,7 @@ struct ExerciseRecordPage {
             .fontSize(24)
             .fontWeight(600)
             .fontColor('#0cc291')
-          Text('消耗热量(千卡)')
+          Text('千卡')
             .fontSize(12)
             .fontColor('#666666')
         }
@@ -548,7 +648,7 @@ struct ExerciseRecordPage {
       .alignItems(HorizontalAlign.Start)
 
       Column() {
-        Text(DateUtils.convertCountTime(exercise.use_time))
+        Text(this.formatExerciseDuration(exercise.use_time))
           .fontSize(14)
           .fontColor('#333333')
           .alignSelf(ItemAlign.End)
@@ -577,6 +677,7 @@ struct ExerciseRecordPage {
       .borderRadius(8)
       .width('100%')
       .height(48)
+      .margin({ bottom: 16 })
       .onClick(() => {
         this.openAddExercise()
       })
@@ -604,5 +705,18 @@ struct ExerciseRecordPage {
     }
 
     return proportion.sort((a, b) => b.count - a.count)
+  }
+
+  private formatExerciseDuration(useTimeMs: number): string {
+    // use_time 是毫秒，转换为分钟
+    const totalMinutes = Math.floor(useTimeMs / (60 * 1000))
+    const hours = Math.floor(totalMinutes / 60)
+    const minutes = totalMinutes % 60
+    
+    if (hours > 0) {
+      return `${hours}小时${minutes}分钟`
+    } else {
+      return `${minutes}分钟`
+    }
   }
 }

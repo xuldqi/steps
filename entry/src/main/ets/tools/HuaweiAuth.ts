@@ -33,7 +33,7 @@ export class HuaweiAuth {
         'https://www.huawei.com/auth/account/base.profile',
         'openid'
       ];
-      
+
       // 用于防跨站点请求伪造
       authRequest.state = util.generateRandomUUID();
       authRequest.forceAuthorization = false;
@@ -43,9 +43,14 @@ export class HuaweiAuth {
       const response: authentication.AuthenticationResponse = await controller.executeRequest(authRequest);
       const payload: HuaweiAuthResponseData = HuaweiAuth.extractResponseData(response);
 
+      const resolvedId = (payload.unionID ?? payload.openID ?? '').trim();
+      if (resolvedId.length === 0) {
+        throw new Error('未获取到华为账号 ID，请稍后再试');
+      }
+
       const userInfo: HuaweiUserInfo = {
-        unionID: payload.unionID ?? '',
-        openID: payload.openID ?? '',
+        unionID: (payload.unionID ?? resolvedId).trim() || resolvedId,
+        openID: (payload.openID ?? resolvedId).trim() || resolvedId,
         displayName: payload.displayName ?? '华为账号用户',
         avatarUri: payload.avatarUri
       };
@@ -54,24 +59,7 @@ export class HuaweiAuth {
       return userInfo;
 
     } catch (error) {
-      const err = error as BusinessError;
-      console.error('[HuaweiAuth] 登录失败:', err.code, err.message);
-      
-      // 抛出友好的错误信息
-      switch (err.code) {
-        case 1002:
-          throw new Error('网络连接失败，请检查网络设置');
-        case 2001:
-          throw new Error('用户取消登录');
-        case 2002:
-          throw new Error('请先登录华为账号');
-        case 6003:
-          throw new Error('应用签名验证失败');
-        case 6002:
-          throw new Error('应用配置错误');
-        default:
-          throw new Error(`登录失败: ${err.message}`);
-      }
+      throw HuaweiAuth.transformError(error as BusinessError);
     }
   }
 
@@ -100,5 +88,28 @@ export class HuaweiAuth {
       result.avatarUri = payload['avatarUri'] as string;
     }
     return result;
+  }
+
+  private static transformError(err: BusinessError | Error): Error {
+    if (!err || typeof (err as BusinessError).code !== 'number') {
+      return err instanceof Error ? err : new Error('登录失败');
+    }
+    const businessError = err as BusinessError;
+    console.error('[HuaweiAuth] 登录失败:', businessError.code, businessError.message);
+
+    switch (businessError.code) {
+      case 1002:
+        return new Error('网络连接失败，请检查网络设置');
+      case 2001:
+        return new Error('用户取消登录');
+      case 2002:
+        return new Error('请先登录华为账号');
+      case 6003:
+        return new Error('应用签名验证失败');
+      case 6002:
+        return new Error('应用配置错误');
+      default:
+        return new Error(`登录失败: ${businessError.message}`);
+    }
   }
 }

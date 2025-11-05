@@ -8,7 +8,6 @@ import preferencesUtil from '../tools/DataPreUtils'
 import targetManager from '../tools/TargetManager'
 import { BodyRecordDialog } from '../view/BodyRecordDialog'
 import { userDataManager } from '../services/UserDataManager'
-import { Log } from '../tools/Logger'
 
 type ViewMode = 'week' | 'month' | 'year'
 type FilterMode = 'min' | 'max' | 'avg' | 'first' | 'last'
@@ -49,7 +48,7 @@ struct WeightTrendPage {
   private filterDialog?: CustomDialogController = undefined
   private earliestRecord: BodyRecordModel | null = null
   private latestRecord: BodyRecordModel | null = null
-  private metricsUnsubscribe: (() => void) | null = null
+  private metricsUnsubscribe?: () => void
 
   private weightCallback: DataCallback<BodyRecordModel> = {
     onDataResult: (type: number, result: BodyRecordModel[], isFirst: boolean): void => {
@@ -64,14 +63,20 @@ struct WeightTrendPage {
   }
 
   aboutToAppear() {
-    // 订阅全局用户指标变化，保证“体重概览”即时刷新
+    // 建立订阅，确保目标体重变化时能实时更新
     this.metricsUnsubscribe?.()
-    this.metricsUnsubscribe = userDataManager.subscribe((metrics) => {
-      if (typeof metrics.weight === 'number' && metrics.weight > 0) {
-        this.currentWeight = metrics.weight
+    this.metricsUnsubscribe = userDataManager.subscribe(async (metrics) => {
+      if (metrics.targetWeight && metrics.targetWeight > 0 && metrics.targetWeight !== this.targetWeight) {
+        this.targetWeight = metrics.targetWeight
+        // 同步到偏好设置
+        await preferencesUtil.putPreferenceValue('steps_ohos', 'weight_target', this.targetWeight)
+        await preferencesUtil.putPreferenceValue('steps_ohos', 'weight_target_update_time', Date.now())
+        this.targetDateLabel = this.formatDisplayDate(Date.now())
+        // 如果有数据，重新计算进度
+        if (this.allWeights.length > 0) {
+          this.computeBaseFigures()
+        }
       }
-      // 订阅到全局变化后，基于现有记录重新汇总展示
-      this.refreshAll()
     })
     // 页面首次创建时也加载数据
     void this.loadPrefs().then(() => {
@@ -79,22 +84,21 @@ struct WeightTrendPage {
     })
   }
 
+  aboutToDisappear() {
+    // 取消订阅
+    this.metricsUnsubscribe?.()
+    this.metricsUnsubscribe = undefined
+  }
+
   async onPageShow() {
-    // 先拉取一次最新全局指标，保证当前体重等信息一致
-    await userDataManager.refreshMetrics()
     // 页面显示时（包括从其他页面返回）刷新数据
+    // 先刷新 userDataManager 的数据，确保获取最新目标体重
+    await userDataManager.refreshMetrics()
     await this.loadPrefs()
     // 刷新数据（数据加载完成后会自动通过weightCallback调用refreshAll）
     this.refreshData()
     // 初始化筛选弹窗
     this.filterDialog = new CustomDialogController({ builder: (): void => { this.filterDialogBuilder() }, autoCancel: true })
-  }
-
-  aboutToDisappear() {
-    if (this.metricsUnsubscribe) {
-      this.metricsUnsubscribe()
-      this.metricsUnsubscribe = null
-    }
   }
 
   private refreshData() {
@@ -106,7 +110,18 @@ struct WeightTrendPage {
     if (['min','max','avg','first','last'].includes(saved)) {
       this.filterMode = saved as FilterMode
     }
-    const t = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight_target', 0) as number
+    // 先从偏好设置读取目标体重
+    let t = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight_target', 0) as number
+    // 如果偏好设置中没有目标值，则从 userDataManager 获取默认目标体重
+    if (t <= 0) {
+      const metrics = await userDataManager.loadMetrics()
+      if (metrics.targetWeight && metrics.targetWeight > 0) {
+        t = metrics.targetWeight
+        // 同步到偏好设置，确保后续直接读取
+        await preferencesUtil.putPreferenceValue('steps_ohos', 'weight_target', t)
+        await preferencesUtil.putPreferenceValue('steps_ohos', 'weight_target_update_time', Date.now())
+      }
+    }
     this.targetWeight = t
     const targetTime = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight_target_update_time', 0) as number
     this.targetDateLabel = targetTime > 0 ? this.formatDisplayDate(targetTime) : '--'
@@ -539,7 +554,8 @@ struct WeightTrendPage {
             } else {
               appDataManager.insertBodyRecord(AppDataManager.TYPE_WEIGHT, formatted)
             }
-            await this.syncWithGlobalWeight()
+            // 同步到 userDataManager 确保全局状态更新
+            await userDataManager.updateWeight(weightValue)
             this.windowEndDate = new Date()
             // 延迟一下确保数据库操作完成后再刷新
             setTimeout(() => {
@@ -589,7 +605,8 @@ struct WeightTrendPage {
             } else {
               appDataManager.insertBodyRecord(AppDataManager.TYPE_WEIGHT, formatted)
             }
-            await this.syncWithGlobalWeight()
+            // 同步到 userDataManager 确保全局状态更新
+            await userDataManager.updateWeight(weightValue)
             this.windowEndDate = new Date()
             // 延迟一下确保数据库操作完成后再刷新
             setTimeout(() => {
@@ -626,7 +643,8 @@ struct WeightTrendPage {
           const formatted = value.toFixed(1)
           const weightValue = parseFloat(formatted)
           appDataManager.insertBodyRecord(AppDataManager.TYPE_WEIGHT, formatted)
-          await this.syncWithGlobalWeight()
+          // 同步到 userDataManager 确保全局状态更新
+          await userDataManager.updateWeight(weightValue)
           this.windowEndDate = new Date()
           // 延迟一下确保数据库操作完成后再刷新
           setTimeout(() => {
@@ -639,31 +657,13 @@ struct WeightTrendPage {
     dialog.open()
   }
 
-  private async syncWithGlobalWeight(): Promise<void> {
-    try {
-      await new Promise<void>((resolve) => {
-        appDataManager.findBodyRecordByType(AppDataManager.TYPE_WEIGHT, {
-          onDataResult: async (_type: number, result: Array<BodyRecordModel>): Promise<void> => {
-            const sorted = (result ?? []).slice().sort((a, b) => b.time - a.time)
-            const latest = sorted[0]
-            const value = latest ? parseFloat((typeof latest.data === 'string' ? latest.data.replace(/[^0-9.]/g, '') : `${latest.data}`)) : 0
-            const normalized = Number.isNaN(value) || value <= 0 ? 0 : value
-            await userDataManager.updateWeight(normalized)
-            await userDataManager.refreshMetrics()
-            resolve()
-          }
-        }, false)
-      })
-    } catch (error) {
-      Log.e('[WeightTrendPage] syncWithGlobalWeight failed: ' + JSON.stringify(error))
-    }
-  }
-
   private async onTargetModified(newValue: number) {
     await targetManager.updateTarget('weight_target', newValue)
     await preferencesUtil.putPreferenceValue('steps_ohos', 'weight_target_update_time', Date.now())
     this.targetWeight = newValue
     this.targetDateLabel = this.formatDisplayDate(Date.now())
+    // 同步到 userDataManager，确保其他页面也能获取到最新目标体重
+    await userDataManager.updateTargetWeight(newValue)
     // 刷新所有数据以确保一致性
     this.refreshAll()
   }

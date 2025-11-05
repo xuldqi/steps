@@ -552,11 +552,11 @@ struct BasalMetabolismPage {
       .margin({ top: 16 })
       .justifyContent(FlexAlign.SpaceBetween)
 
-      this.infoRow('年龄', this.getFormattedAge(), () => this.openPicker('age'))
+      this.infoRow('年龄', () => this.getFormattedAge(), () => this.openPicker('age'))
       this.divider()
-      this.infoRow('身高', this.getFormattedHeight(), () => this.openPicker('height'))
+      this.infoRow('身高', () => this.getFormattedHeight(), () => this.openPicker('height'))
       this.divider()
-      this.infoRow('体重', this.getFormattedWeight(), () => this.openPicker('weight'))
+      this.infoRow('体重', () => this.getFormattedWeight(), () => this.openPicker('weight'))
     }
     .padding({ top: 24, bottom: 12, left: 20, right: 20 })
     .backgroundColor('#FFFFFF')
@@ -690,16 +690,16 @@ struct BasalMetabolismPage {
   }
 
   @Builder
-  private infoRow(label: string, value: string, handler: () => void) {
+  private infoRow(label: string, valueGetter: () => string, handler: () => void) {
     Row() {
       Text(label)
         .fontSize(16)
         .fontColor('#333333')
         .layoutWeight(1)
 
-      Text(value)
+      Text(valueGetter())
         .fontSize(15)
-        .fontColor(value === '请选择' ? '#999999' : '#0cc291')
+        .fontColor(valueGetter() === '请选择' ? '#999999' : '#0cc291')
         .margin({ right: 8 })
 
       Image($r('app.media.right_point'))

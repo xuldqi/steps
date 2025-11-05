@@ -3,6 +3,7 @@ import { router, window } from '@kit.ArkUI'
 import { McBarChart, Options } from '@mcui/mccharts'
 import appDataManager, { DataCallback } from '../tools/AppDataManager'
 import { PerStepModel, SportModel } from '../appdata/Model'
+import StepData from '../appdata/StepData'
 import { DateUtils } from '../tools/DateUtils'
 import { Log } from '../tools/Logger'
 import { TargetProgressView } from '../view/TargetModifyDialog'
@@ -25,9 +26,10 @@ struct ChartPage {
   private dates: Array<string> = new Array<string>()
   
   @State seriesRadiusOption: Options = new Options({
-    title: { show: true, text: '最近七天的热量消耗', right: 20, top: 30 },
+    title: { show: true, text: '千卡', right: 20, top: 30 },
     xAxis: { data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日']},
-    series: [{ name: '热量', barStyle: { 
+    legend: { show: false },
+    series: [{ name: '', barStyle: { 
           width: 10,
           color:'#FF8C47',
           borderRadius: [4, 4] },
@@ -36,6 +38,10 @@ struct ChartPage {
 
   // 热量数据 - 从运动记录中获取
   @State sportRecords: Array<SportModel> = new Array<SportModel>()
+  // 按天统计的步数热量（仅用于无运动记录热量时的兜底展示）
+  private stepCaloriesByDate: Map<string, number> = new Map<string, number>()
+  private stepListLoaded: boolean = false
+  private sportListLoaded: boolean = false
 
   private sportCallback: DataCallback<SportModel> = {
     onDataResult: (type: number, result: SportModel[], isReturnFirstData: boolean): void => {
@@ -47,6 +53,24 @@ struct ChartPage {
       const filtered = this.filterRecordsByTimeRange(result || [])
       this.sportRecords = filtered
       console.info('[ChartPage] 筛选后的记录数量:', filtered.length)
+      this.sportListLoaded = true
+      this.calculateCalorieStats()
+    }
+  }
+
+  // 一周内每天步数列表回调（用于计算当天步数估算的热量）
+  private perStepCallback: DataCallback<PerStepModel> = {
+    onDataResult: (type: number, result: Array<PerStepModel>, isReturnFirstData: boolean, firstDay?: string) => {
+      this.stepCaloriesByDate.clear()
+      for (const item of result || []) {
+        // 归一化日期格式为 yyyy-MM-dd
+        const date = (item.date || '').replace(/\//g, '-')
+        const steps = Math.max(0, item.steps)
+        const calories = Number.parseFloat(Utils.getKalByStep(steps))
+        this.stepCaloriesByDate.set(date, Number.isFinite(calories) ? Math.round(calories) : 0)
+      }
+      console.info('[ChartPage] perDay steps calories:', Array.from(this.stepCaloriesByDate.entries()))
+      this.stepListLoaded = true
       this.calculateCalorieStats()
     }
   }
@@ -86,6 +110,10 @@ struct ChartPage {
   }
 
   private calculateCalorieStats() {
+    // 仅在数据窗口准备好时计算
+    if (this.dates.length === 0) {
+      return
+    }
     console.info('[ChartPage] calculateCalorieStats: 运动记录数量=', this.sportRecords.length)
     
     // 按日期分组计算每日热量
@@ -102,6 +130,31 @@ struct ChartPage {
       }
     }
     
+    // 用每日步数估算热量兜底：若某天无运动记录热量，则使用步数热量
+    for (const d of this.dates) {
+      const existed = dailyCalories.get(d) || 0
+      if (existed <= 0) {
+        const stepCal = this.stepCaloriesByDate.get(d) || 0
+        if (stepCal > 0) {
+          dailyCalories.set(d, stepCal)
+        }
+      }
+    }
+
+    // 如果今天仍为0，但首页有实时步数，则再兜底一次
+    // 使用与 this.dates 相同的连字符日期格式
+    const today = this.formatYMD(new Date())
+    const todayCal = dailyCalories.get(today) || 0
+    if (todayCal <= 0) {
+      const liveSteps = StepData.getCurrentSteps?.() ?? 0
+      if (liveSteps > 0) {
+        const liveCal = Math.round(Number.parseFloat(Utils.getKalByStep(liveSteps)))
+        if (liveCal > 0) {
+          dailyCalories.set(today, liveCal)
+        }
+      }
+    }
+
     console.info('[ChartPage] calculateCalorieStats: 每日热量数据=', Array.from(dailyCalories.entries()))
     
     // 计算总热量和平均热量
@@ -118,9 +171,10 @@ struct ChartPage {
     const divisor = dailyCalories.size > 0 ? dailyCalories.size : 1
     this.argCalories = this.allCalories / divisor
 
-    // 计算今日热量
-    const todayDate = DateUtils.getYMD()
+    // 计算今日热量（使用与 this.dates 一致的格式 yyyy-MM-dd）
+    const todayDate = this.formatYMD(new Date())
     this.currentCalories = dailyCalories.get(todayDate) || 0
+    console.info('[ChartPage] calculateCalorieStats: 今日日期=', todayDate, '今日热量=', this.currentCalories)
 
     if (this.viewMode === 'year') {
       this.reward_str = ''
@@ -138,30 +192,27 @@ struct ChartPage {
     // 遍历日期范围，查找对应的热量数据
     for (let i = 0; i < this.dates.length; i++) {
       const calories = dailyCalories.get(this.dates[i]) || 0
-      
-      // 只有有数据且热量大于0时才添加到图表
-      if (calories > 0) {
-        if (this.viewMode === 'week') {
-          // 周视图：显示"一二三四五六日"
-          const d = this.parseDateFromYMD(this.dates[i])
-          const jsDay = d.getDay() // 周日0、周一1
-          const weekDays = ['日', '一', '二', '三', '四', '五', '六']
-          mm_dates.push(weekDays[jsDay])
-        } else if (this.viewMode === 'month') {
-          // 月视图：只显示周一的日期
-          const d = this.parseDateFromYMD(this.dates[i])
-          const jsDay = d.getDay() // 周日0、周一1
-          if (jsDay === 1) { // 只显示周一
-            mm_dates.push(this.formatMDLabel(this.dates[i]))
-          } else {
-            continue // 跳过非周一
-          }
-        } else {
-          // 年视图：显示月份数字
-          const d = this.parseDateFromYMD(this.dates[i])
-          const month = (d.getMonth() + 1).toString()
-          mm_dates.push(month)
+
+      if (this.viewMode === 'week') {
+        // 周视图：固定显示七天，包含0值，避免单点不渲染
+        const d = this.parseDateFromYMD(this.dates[i])
+        const jsDay = d.getDay() // 周日0、周一1
+        const weekDays = ['日', '一', '二', '三', '四', '五', '六']
+        mm_dates.push(weekDays[jsDay])
+        mm_datas.push(calories)
+      } else if (this.viewMode === 'month') {
+        // 月视图：只显示周一
+        const d = this.parseDateFromYMD(this.dates[i])
+        const jsDay = d.getDay()
+        if (jsDay === 1) {
+          mm_dates.push(this.formatMDLabel(this.dates[i]))
+          mm_datas.push(calories)
         }
+      } else {
+        // 年视图：显示月份数字
+        const d = this.parseDateFromYMD(this.dates[i])
+        const month = (d.getMonth() + 1).toString()
+        mm_dates.push(month)
         mm_datas.push(calories)
       }
     }
@@ -169,8 +220,9 @@ struct ChartPage {
     console.info('[ChartPage] calculateCalorieStats: 图表数据 - 标签=', mm_dates, '数值=', mm_datas)
     
     this.seriesRadiusOption.setVal({
+      legend: { show: false },
       xAxis: { data: mm_dates },
-      series: [{ name: '热量', barStyle: { 
+      series: [{ name: '', barStyle: { 
             width: 10,
             color:'#FF8C47',
             borderRadius: [4, 4] }, data: mm_datas }]
@@ -216,13 +268,13 @@ struct ChartPage {
 
   private loadByViewMode() {
     if (this.viewMode === 'week') {
-      this.seriesRadiusOption.setVal({ title: { text: '热量' } })
+      this.seriesRadiusOption.setVal({ title: { text: '千卡' } })
       this.loadWeekWindow()
     } else if (this.viewMode === 'month') {
-      this.seriesRadiusOption.setVal({ title: { text: '热量' } })
+      this.seriesRadiusOption.setVal({ title: { text: '千卡' } })
       this.loadDailyWindow(30)
     } else {
-      this.seriesRadiusOption.setVal({ title: { text: '热量' } })
+      this.seriesRadiusOption.setVal({ title: { text: '千卡' } })
       this.showYearRecord()
       // 顶部区间显示
       const end = new Date(this.windowEndDate)
@@ -260,7 +312,11 @@ struct ChartPage {
     const startMs = this.getStartOfDay(start)
     const endMs = this.getEndOfDay(end)
     console.info('[ChartPage] loadWeekWindow: 查询时间范围', new Date(startMs), '到', new Date(endMs))
+    this.sportListLoaded = false
+    this.stepListLoaded = false
     appDataManager.findSportByType(0, this.sportCallback, false) // 0表示查询所有类型
+    // 同时加载这7天的步数并换算热量
+    appDataManager.getStepPerDayWeekList3(this.dates, this.perStepCallback, true)
   }
 
   private loadDailyWindow(sizeDays: number) {
@@ -425,7 +481,7 @@ struct ChartPage {
           // 目标进度 - 白色卡片容器
           Column(){
             TargetProgressView({
-              targetName: '热量',
+              targetName: '千卡',
               currentValue: this.currentCalories,
               targetValue: this.targetCalories,
               unit: '千卡'

@@ -4,6 +4,7 @@ import { Utils } from '../tools/Utils'
 import AppDataManager from '../tools/AppDataManager'
 import { DateUtils } from '../tools/DateUtils'
 import { systemDateTime } from '@kit.BasicServicesKit'
+import preferencesUtil from '../tools/DataPreUtils'
 
 const PRIMARY = '#0cc291'
 
@@ -30,6 +31,8 @@ struct AddExercisePage {
   @State showTimeDialog: boolean = false
   @State userModifiedDistance: boolean = false // 用户是否手动修改过距离
   @State calories: number = 0 // 消耗的热量
+  @State distancePickerIndex: number = 0 // 距离选择器的当前索引
+  @State userWeight: number = 60 // 用户体重（公斤）
 
   private exerciseTypes: Array<ExerciseType> = [
     { id: 1, name: '室内跑步', icon: $r('app.media.sport_indoor_run') },
@@ -40,12 +43,28 @@ struct AddExercisePage {
     // 隐藏瑜伽和跳绳
   ]
 
-  aboutToAppear() {
+  async aboutToAppear() {
     // 设置默认时间为当前时间
     const now = new Date()
     this.selectedTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
     this.tempDuration = this.duration
     this.tempDistance = this.distance
+    // 初始化距离选择器索引
+    const list = this.generateDistanceList()
+    const rounded = Math.round(this.distance * 10) / 10
+    const idx = list.findIndex(v => Math.abs(v - rounded) < 0.01)
+    this.distancePickerIndex = idx >= 0 ? idx : 0
+    
+    // 获取用户体重
+    const storedWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight', 60) as number
+    if (typeof storedWeight === 'number' && !Number.isNaN(storedWeight) && storedWeight > 0) {
+      this.userWeight = storedWeight
+    } else {
+      this.userWeight = 60
+    }
+    
+    // 计算初始卡路里
+    this.calories = this.calculateCalories()
   }
 
   private generateDurationList(): Array<number> {
@@ -74,21 +93,38 @@ struct AddExercisePage {
   private getDistanceSelectedIndex(): number {
     const list = this.generateDistanceList()
     const rounded = Math.round(this.tempDistance * 10) / 10
-    const idx = list.findIndex(v => v === rounded)
-    return idx >= 0 ? idx : 0
+    const idx = list.findIndex(v => Math.abs(v - rounded) < 0.01) // 使用容差比较浮点数
+    return idx >= 0 ? idx : this.distancePickerIndex
   }
 
   private calculateCalories(): number {
-    // 根据运动类型和时长计算热量
-    let baseCalorie = 10
+    // 使用基于体重和距离的METs公式计算热量（与AddSportPage保持一致）
+    const weight = this.userWeight > 0 ? this.userWeight : 60
+    const distance = this.distance > 0 ? this.distance : 0
+    let calories = 0
+    
     switch (this.selectedType) {
-      case 1: baseCalorie = 10; break // 室内跑
-      case 2: baseCalorie = 12; break // 室外跑
-      case 3: baseCalorie = 6; break  // 骑行
-      case 4: baseCalorie = 6; break  // 健走
-      case 5: baseCalorie = 15; break // 爬山
+      case 1: // 室内跑
+      case 2: // 室外跑
+        calories = weight * distance * 1.036 * 0.8
+        break
+      case 3: // 骑行
+        calories = weight * distance * 1.036 * 0.5
+        break
+      case 4: // 健走
+        calories = weight * distance * 1.036
+        break
+      case 5: // 爬山
+        calories = weight * distance * 1.036 * 1.2
+        break
+      default:
+        calories = weight * distance * 1.036
     }
-    return Math.round(baseCalorie * this.duration)
+    
+    if (!Number.isFinite(calories)) {
+      calories = 0
+    }
+    return Math.max(0, Math.round(calories))
   }
 
   private calculateDistance(): number {
@@ -155,23 +191,15 @@ struct AddExercisePage {
         })
 
         Column() {
-          // 运动类型
-          this.buildInputItem('运动类型', this.getSelectedTypeName(), () => {
-            this.showTypeDialog = true
-          })
+          // 运动类型（使用响应式绑定）
+          this.buildTypeInputItem()
 
-          // 运动时长
-          this.buildInputItem('运动时长', `${this.duration}分钟`, () => {
-            this.tempDuration = this.duration
-            this.showDurationDialog = true
-          })
+          // 运动时长（使用响应式绑定）
+          this.buildDurationInputItem()
 
-          // 距离（仅部分运动类型需要）
+          // 距离（仅部分运动类型需要，使用响应式绑定）
           if (this.isDistanceRequired()) {
-            this.buildInputItem('距离', `${this.distance}公里`, () => {
-              this.tempDistance = this.distance
-              this.showDistanceDialog = true
-            })
+            this.buildDistanceInputItem()
           }
 
           // 运动日期
@@ -275,6 +303,100 @@ struct AddExercisePage {
     .onClick(onClick)
   }
 
+  // 专门用于距离的输入项，直接绑定状态变量
+  @Builder buildDistanceInputItem() {
+    Row() {
+      Text('距离')
+        .fontSize(16)
+        .fontColor('#333333')
+        .layoutWeight(1)
+      
+      Text(`${this.distance.toFixed(1)}公里`)
+        .fontSize(16)
+        .fontColor('#666666')
+        .margin({ right: 8 })
+      
+      Text('>')
+        .fontSize(16)
+        .fontColor('#999999')
+    }
+    .width('100%')
+    .height(60)
+    .padding({ left: 16, right: 16 })
+    .backgroundColor('#FFFFFF')
+    .borderRadius(8)
+    .margin({ bottom: 12 })
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      this.tempDistance = this.distance
+      // 更新距离选择器的索引
+      const list = this.generateDistanceList()
+      const rounded = Math.round(this.distance * 10) / 10
+      const idx = list.findIndex(v => Math.abs(v - rounded) < 0.01)
+      this.distancePickerIndex = idx >= 0 ? idx : 0
+      this.showDistanceDialog = true
+    })
+  }
+
+  // 专门用于运动时长的输入项，直接绑定状态变量
+  @Builder buildDurationInputItem() {
+    Row() {
+      Text('运动时长')
+        .fontSize(16)
+        .fontColor('#333333')
+        .layoutWeight(1)
+      
+      Text(`${this.duration}分钟`)
+        .fontSize(16)
+        .fontColor('#666666')
+        .margin({ right: 8 })
+      
+      Text('>')
+        .fontSize(16)
+        .fontColor('#999999')
+    }
+    .width('100%')
+    .height(60)
+    .padding({ left: 16, right: 16 })
+    .backgroundColor('#FFFFFF')
+    .borderRadius(8)
+    .margin({ bottom: 12 })
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      this.tempDuration = this.duration
+      this.showDurationDialog = true
+    })
+  }
+
+  // 专门用于运动类型的输入项，直接绑定状态变量
+  @Builder buildTypeInputItem() {
+    Row() {
+      Text('运动类型')
+        .fontSize(16)
+        .fontColor('#333333')
+        .layoutWeight(1)
+      
+      Text(this.getSelectedTypeName())
+        .fontSize(16)
+        .fontColor('#666666')
+        .margin({ right: 8 })
+      
+      Text('>')
+        .fontSize(16)
+        .fontColor('#999999')
+    }
+    .width('100%')
+    .height(60)
+    .padding({ left: 16, right: 16 })
+    .backgroundColor('#FFFFFF')
+    .borderRadius(8)
+    .margin({ bottom: 12 })
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      this.showTypeDialog = true
+    })
+  }
+
   @Builder buildTypeDialog() {
     Stack() {
       Column()
@@ -287,10 +409,10 @@ struct AddExercisePage {
 
       Column() {
         Text('选择运动类型')
-          .fontSize(16)
-          .fontWeight(500)
+          .fontSize(18)
+          .fontWeight(600)
           .fontColor('#333333')
-          .margin({ bottom: 16 })
+          .margin({ bottom: 12 })
 
         Grid() {
           ForEach(this.exerciseTypes, (type: ExerciseType) => {
@@ -301,13 +423,15 @@ struct AddExercisePage {
                   .height(32)
                   .margin({ bottom: 6 })
                 Text(type.name)
-                  .fontSize(11)
+                  .fontSize(12)
                   .fontColor(this.selectedType === type.id ? '#0cc291' : '#666666')
               }
               .width('100%')
+              .height(70)
               .padding(8)
               .backgroundColor(this.selectedType === type.id ? '#E8F5E8' : '#F8F8F8')
               .borderRadius(6)
+              .justifyContent(FlexAlign.Center)
               .onClick(() => {
                 this.selectedType = type.id
                 this.showTypeDialog = false
@@ -322,14 +446,16 @@ struct AddExercisePage {
         .rowsGap(8)
         .columnsGap(8)
       }
-      .width('90%')
-      .padding(16)
+      .width('80%')
+      .height(260) // 固定弹窗高度为260px
+      .padding({ top: 16, bottom: 16, left: 20, right: 20 })
       .backgroundColor('#FFFFFF')
-      .borderRadius(12)
-      .align(Alignment.Bottom)
+      .borderRadius(16)
+      .align(Alignment.Center)
     }
     .width('100%')
     .height('100%')
+    .alignContent(Alignment.Center)
   }
 
   @Builder buildDurationDialog() {
@@ -386,6 +512,7 @@ struct AddExercisePage {
               this.duration = this.tempDuration
               if (!this.userModifiedDistance) {
                 this.distance = this.calculateDistance()
+                this.tempDistance = this.distance
               }
               this.calories = this.calculateCalories()
               this.showDurationDialog = false
@@ -426,6 +553,7 @@ struct AddExercisePage {
         })
           .onChange((value, index) => {
             const idx = Array.isArray(index) ? index[0] as number : (index as number)
+            this.distancePickerIndex = idx
             this.tempDistance = this.generateDistanceList()[idx]
           })
           .height(200)
@@ -453,8 +581,13 @@ struct AddExercisePage {
             .height(48)
             .margin({ left: 12 })
             .onClick(() => {
-              this.distance = this.tempDistance // 直接更新距离值
+              // 从当前索引获取距离值，确保使用最新的选择
+              const list = this.generateDistanceList()
+              const selectedDistance = list[this.distancePickerIndex]
+              this.distance = selectedDistance // 直接更新距离值
+              this.tempDistance = selectedDistance // 同步更新tempDistance
               this.userModifiedDistance = true // 确认用户已手动修改距离
+              this.calories = this.calculateCalories() // 更新热量计算
               this.showDistanceDialog = false
             })
         }

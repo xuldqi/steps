@@ -22,7 +22,7 @@ struct ActivityCountPage {
   private dates: Array<string> = new Array<string>()
   
   @State seriesRadiusOption: Options = new Options({
-    title: { show: true, text: '最近七天的活动次数', right: 20, top: 30 },
+    title: { show: true, text: '次', right: 20, top: 30 },
     xAxis: { data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日']},
     series: [{ name: '次数', barStyle: { 
           width: 10,
@@ -45,7 +45,7 @@ struct ActivityCountPage {
     // 先按日期聚合数据
     const dailyActivities: Map<string, number> = new Map()
     for (const item of this.activityData) {
-      const itemDate = new Date(item.start_time).toISOString().split('T')[0]
+      const itemDate = DateUtils.timeToDateNoYM2(item.start_time)
       const existing = dailyActivities.get(itemDate) ?? 0
       dailyActivities.set(itemDate, existing + 1)
     }
@@ -168,7 +168,7 @@ struct ActivityCountPage {
                  
                  // 目标进度
                  TargetProgressView({
-                   targetName: '活动次数',
+                   targetName: '次',
                    currentValue: this.currentActivities,
                    targetValue: this.targetActivities,
                    unit: '次'

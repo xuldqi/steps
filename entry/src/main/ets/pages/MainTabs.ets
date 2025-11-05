@@ -20,6 +20,8 @@ import { AppStateStore } from '../services/AppStateStore'
 import type { AppState } from '../models/AppModels'
 import targetManager, { TargetValue } from '../tools/TargetManager'
 import { userDataManager } from '../services/UserDataManager'
+import { BusinessError, pasteboard } from '@kit.BasicServicesKit'
+import { bundleManager } from '@kit.AbilityKit'
 
 interface GoalProgressItem {
   key: string,
@@ -43,8 +45,8 @@ interface HealthFeatureItem {
 
 interface BodyOverviewCard {
   title: string
-  value: string
-  unit?: string
+  valueGetter: () => string
+  unitGetter: () => string
   icon: Resource
   badgeBackground: string
   noteColor?: string
@@ -69,6 +71,7 @@ struct MainTabs {
   @State currentSubIndex: number = 0
   //Tab的底色
   @State tabColor: string = '#F5F5F5'
+  @State version: string = '1.0.1' // 应用版本号
   private controller: TabsController = new TabsController()
   private subController: TabsController = new TabsController();
   private panOptionRight: PanGestureOptions = new PanGestureOptions({ direction: PanDirection.Right });
@@ -229,8 +232,8 @@ struct MainTabs {
 
   aboutToAppear(): void {
     this.unsubscribe?.()
-    this.unsubscribe = this.appStore.subscribe((state: AppState) => {
-      this.applyAppState(state)
+    this.unsubscribe = this.appStore.subscribe(async (state: AppState) => {
+      await this.applyAppState(state)
     })
     // 订阅用户身体数据变化
     this.metricsUnsubscribe?.()
@@ -241,6 +244,13 @@ struct MainTabs {
       this.userGender = metrics.gender
       this.calculateBodyMetrics()
     })
+    // 初始化体重卡片数据为"未记录"，等待后续数据加载更新（item=6，STEPS_WEIGHT）
+    this.updateCardMetrics(6, {
+      subtitle: '当前',
+      value: '未记录',
+      prevTitle: '上次',
+      prevValue: '无数据'
+    })
     this.syncUserProfile()
     this.loadGoalTargets()
     this.requestTodaySportSummary()
@@ -248,6 +258,8 @@ struct MainTabs {
     this.currentDateStr = DateUtils.getYMD()
     this.startDailyWatcher()
     targetManager.addListener(this.onTargetsChanged)
+    // 加载体重数据并更新卡片
+    void this.syncLatestWeight()
   }
 
   aboutToDisappear(): void {
@@ -492,6 +504,17 @@ struct MainTabs {
   }
 
   async onPageShow(){
+    // 获取应用版本号
+    bundleManager.getBundleInfoForSelf(bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION).then((bundleInfo)=>{
+      this.version = bundleInfo.versionName//应用版本名
+    }).catch((error: BusinessError )=>{
+      Log.i("get bundleInfo failed,error is "+error)
+    })
+    
+    // 先刷新用户信息（昵称等），确保从个人详情返回时能立即看到更新
+    await this.syncUserProfile()
+    // 立即应用当前 AppState，确保昵称等数据正确显示
+    await this.applyAppState(this.appStore.getState())
     //目标步数初始化
     await targetManager.loadTargets()
     this.tarSteps = targetManager.getTarget('step_target')
@@ -503,7 +526,9 @@ struct MainTabs {
     //步数回调注册
     StepData.addCallback(this.stepsCallback)
     this.loadYesterdayMetrics()
-    //卡片信息更新
+    //卡片信息更新（每次页面显示时都刷新，确保卡片顺序变化能立即反映）
+    // 重新加载卡片配置，确保获取最新的顺序
+    await mainCardManager.loadMainCardManager()
     this.updateMainCard()
     
     // 加载身体数据（包括从数据库同步最新身高和体重）
@@ -604,6 +629,18 @@ struct MainTabs {
 
   private createMainCardData(item:number, index:number): MainCardData {
     const metrics = this.cardMetrics[item]
+    // 特殊处理体重卡片（item=6，STEPS_WEIGHT），如果没有记录则显示"未记录"
+    if (item === 6 && !metrics) {
+      // 如果还没有加载体重数据，先显示"未记录"而不是硬编码的"70公斤"
+      return {
+        item,
+        index,
+        subtitle: '当前',
+        value: '未记录',
+        prevTitle: '上次',
+        prevValue: '无数据'
+      }
+    }
     const subtitle = metrics?.subtitle ?? appDataManager.getMainCardSubStr(item)
     const value = metrics?.value ?? appDataManager.getMainCardSubData(item)
     const prevTitle = metrics?.prevTitle ?? appDataManager.getMainCardLastTitle(item)
@@ -622,13 +659,19 @@ struct MainTabs {
   }
 
   private updateCardMetrics(type: number, metrics: Partial<MainCardMetrics>) {
+    const defaultSubtitle = appDataManager.getMainCardSubStr(type)
+    const defaultValue = appDataManager.getMainCardSubData(type)
+    // 对于体重卡片（type=6，STEPS_WEIGHT），如果默认值是"70公斤"，应该改为"未记录"
+    const safeDefaultValue = (type === 6 && defaultValue === '70公斤') ? '未记录' : defaultValue
     const previous: MainCardMetrics = this.cardMetrics[type] ?? {
-      subtitle: appDataManager.getMainCardSubStr(type),
-      value: appDataManager.getMainCardSubData(type)
+      subtitle: defaultSubtitle,
+      value: safeDefaultValue
     }
+    // 如果当前值还是"70公斤"（可能是之前设置的），也要替换
+    const previousValue = (type === 6 && previous.value === '70公斤') ? '未记录' : previous.value
     const merged: MainCardMetrics = {
       subtitle: metrics.subtitle ?? previous.subtitle,
-      value: metrics.value ?? previous.value,
+      value: metrics.value ?? previousValue,
       prevTitle: metrics.prevTitle ?? previous.prevTitle,
       prevValue: metrics.prevValue ?? previous.prevValue
     }
@@ -879,7 +922,32 @@ struct MainTabs {
               this.currentWeight = weightValue
               this.calculateBodyMetrics()
             }
+            // 更新体重卡片数据（item=6，STEPS_WEIGHT）
+            const currentWeightStr = weightValue.toFixed(1) + '公斤'
+            const prevWeight = result.length > 1 ? result[1] : null
+            let prevWeightStr = '无数据'
+            if (prevWeight) {
+              let prevCleanData = prevWeight.data.replace(/[^0-9.]/g, '')
+              const prevWeightValue = parseFloat(prevCleanData)
+              if (!isNaN(prevWeightValue) && prevWeightValue > 0) {
+                prevWeightStr = prevWeightValue.toFixed(1) + '公斤'
+              }
+            }
+            this.updateCardMetrics(6, {
+              subtitle: '当前',
+              value: currentWeightStr,
+              prevTitle: '上次',
+              prevValue: prevWeightStr
+            })
           }
+        } else {
+          // 没有体重记录，显示"未记录"
+          this.updateCardMetrics(6, {
+            subtitle: '当前',
+            value: '未记录',
+            prevTitle: '上次',
+            prevValue: '无数据'
+          })
         }
       }
     }, true) // isReturnFirstData = true，只获取最新一条
@@ -1099,8 +1167,8 @@ struct MainTabs {
   private getHeightOverviewCard(): BodyOverviewCard {
     return {
       title: '我的身高',
-      value: this.currentHeight > 0 ? this.currentHeight.toFixed(1) : '--',
-      unit: this.currentHeight > 0 ? '厘米' : '',
+      valueGetter: () => this.currentHeight > 0 ? this.currentHeight.toFixed(1) : '--',
+      unitGetter: () => this.currentHeight > 0 ? '厘米' : '',
       icon: $r('app.media.icon_my_height'),
       badgeBackground: 'rgba(98,214,176,0.18)',
       onTap: () => {
@@ -1122,8 +1190,8 @@ struct MainTabs {
   private getWeightOverviewCard(): BodyOverviewCard {
     return {
       title: '我的体重',
-      value: this.currentWeight > 0 ? this.currentWeight.toFixed(1) : '--',
-      unit: this.currentWeight > 0 ? '公斤' : '',
+      valueGetter: () => this.currentWeight > 0 ? this.currentWeight.toFixed(1) : '--',
+      unitGetter: () => this.currentWeight > 0 ? '公斤' : '',
       icon: $r('app.media.icon_my_weight'),
       badgeBackground: 'rgba(231,163,255,0.18)',
       onTap: () => {
@@ -1135,8 +1203,8 @@ struct MainTabs {
   private getBmrOverviewCard(): BodyOverviewCard {
     return {
       title: '基础代谢',
-      value: this.basalMetabolism > 0 ? Math.round(this.basalMetabolism).toString() : '--',
-      unit: this.basalMetabolism > 0 ? '千卡' : '',
+      valueGetter: () => this.basalMetabolism > 0 ? Math.round(this.basalMetabolism).toString() : '--',
+      unitGetter: () => this.basalMetabolism > 0 ? '千卡' : '',
       icon: $r('app.media.icon_my_bmr'),
       badgeBackground: 'rgba(255,140,71,0.18)',
       onTap: () => {
@@ -1148,8 +1216,8 @@ struct MainTabs {
   private getBmiOverviewCard(): BodyOverviewCard {
     return {
       title: 'BMI 指数',
-      value: this.bmi > 0 ? this.bmi.toFixed(1) : '--',
-      unit: this.bmi > 0 ? (this.bmiStatus || '') : '',
+      valueGetter: () => this.bmi > 0 ? this.bmi.toFixed(1) : '--',
+      unitGetter: () => this.bmi > 0 ? (this.bmiStatus || '') : '',
       noteColor: this.resolveBmiColor(),
       icon: $r('app.media.icon_my_bmi'),
       badgeBackground: 'rgba(119,198,147,0.18)',
@@ -1168,13 +1236,13 @@ struct MainTabs {
           .fontColor('#333333')
 
         Row() {
-          Text(config.value)
+          Text(config.valueGetter())
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
             .fontColor('#222222')
 
-          if (config.unit && config.unit.length > 0) {
-            Text(config.unit)
+          if (config.unitGetter() && config.unitGetter().length > 0) {
+            Text(config.unitGetter())
               .fontSize(12)
               .fontColor(config.noteColor ?? '#666666')
               .margin({ left: 4 })
@@ -1462,11 +1530,26 @@ struct MainTabs {
               Column(){
                 Row(){
                   Row(){
-                    Image(this.userImg).alt(this.userName === '未登录用户' ? $r('app.media.default_user_icon') : $r('app.media.user_image')).width(60).height(60).borderRadius(15)
-                      .onClick(() => {
-                        console.info('[MainTabs] ===== 点击头像 =====');
-                        this.handleLoginTap();
-                      })
+                    if (this.userImg) {
+                      Image(this.userImg)
+                        .width(60)
+                        .height(60)
+                        .borderRadius(15)
+                        .onClick(() => {
+                          console.info('[MainTabs] ===== 点击头像 =====');
+                          this.handleLoginTap();
+                        })
+                    } else {
+                      Image($r('app.media.default_user_icon'))
+                        .width(60)
+                        .height(60)
+                        .borderRadius(15)
+                        .fillColor('#BDBDBD')
+                        .onClick(() => {
+                          console.info('[MainTabs] ===== 点击头像 =====');
+                          this.handleLoginTap();
+                        })
+                    }
                     Text(){
                       Span(this.userName).fontSize(18).fontColor('#000000').fontWeight(600)
                       Span('\n')
@@ -1520,15 +1603,55 @@ struct MainTabs {
                 this.buildBodyDataCards()
 
                 Column(){
-                  SettingItemView({formData:{type:8,title:'数据统计',icon:$r('app.media.setting_data_sport')}}).onClick(() => {
-                    router.pushUrl({ url: 'pages/ChartPage' })
+                  // 个人信息手机清单（无图标）
+                  Row(){
+                    Text('个人信息手机清单').layoutWeight(1).fontSize(15).fontColor('#333333')
+                    Image($r('app.media.right_point')).width(15).height(15).fillColor('#999999')
+                  }.width('100%').padding(12).onClick(() => {
+                    router.pushUrl({ url: 'pages/ListCollectPage' })
                   })
-                }.width('96%').backgroundColor('#FFFFFF').borderRadius(15).margin({top:20})
-
-                Column(){
-                  SettingItemView({formData:{type:9,title:'设置',icon:$r('app.media.setting_icon_n')}})
-                  SettingItemView({formData:{type:4,title:'个人信息手机清单',icon:$r('app.media.userinfo_sj')}})
-                  SettingItemView({formData:{type:5,title:'个人信息共享清单',icon:$r('app.media.userinfo_gx')}})
+                  
+                  // 个人信息共享清单（无图标）
+                  Row(){
+                    Text('个人信息共享清单').layoutWeight(1).fontSize(15).fontColor('#333333')
+                    Image($r('app.media.right_point')).width(15).height(15).fillColor('#999999')
+                  }.width('100%').padding(12).onClick(() => {
+                    router.pushUrl({ url: 'pages/ListSharePage' })
+                  })
+                  
+                  // 设置项：用户协议
+                  Row(){
+                    Text('用户协议').layoutWeight(1).fontSize(15).fontColor('#333333')
+                    Image($r('app.media.right_point')).width(15).height(15).fillColor('#999999')
+                  }.width('100%').padding(12).onClick(() => {
+                    router.pushUrl({ url: 'pages/XYPage' })
+                  })
+                  
+                  // 设置项：隐私协议
+                  Row(){
+                    Text('隐私协议').layoutWeight(1).fontSize(15).fontColor('#333333')
+                    Image($r('app.media.right_point')).width(15).height(15).fillColor('#999999')
+                  }.width('100%').padding(12).onClick(() => {
+                    router.pushUrl({ url: 'pages/YSPage' })
+                  })
+                  
+                  // 设置项：公众号
+                  Row(){
+                    Text('公众号').layoutWeight(1).fontSize(15).fontColor('#333333')
+                    Text('微小目标(micro-target)').fontSize(15).fontColor('#676767')
+                  }.width('100%').padding(12).onClick(() => {
+                    const shardedUrl = "micro-target"
+                    const pasteboardData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, shardedUrl)
+                    const systemPasteboard = pasteboard.getSystemPasteboard()
+                    systemPasteboard.setData(pasteboardData)
+                    Utils.showToast('已复制micro-target到剪贴板')
+                  })
+                  
+                  // 设置项：版本号
+                  Row(){
+                    Text('版本号').layoutWeight(1).fontSize(15).fontColor('#333333')
+                    Text(this.version).fontSize(15).fontColor('#676767')
+                  }.width('100%').padding(12)
                 }.width('96%').backgroundColor('#FFFFFF').borderRadius(15).margin({top:20})
 
               }.width('100%').padding({

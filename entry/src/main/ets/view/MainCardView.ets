@@ -24,7 +24,7 @@ export interface MainCardData {
 @Component
 export struct MainCardView {
 
-  @State formData: MainCardData = {
+  @Prop formData: MainCardData = {
     item:0,
     index:0,
   }

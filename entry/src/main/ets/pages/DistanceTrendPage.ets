@@ -28,7 +28,7 @@ struct DistanceTrendPage {
   private dates: Array<string> = new Array<string>()
   
   @State seriesRadiusOption: Options = new Options({
-    title: { show: true, text: '最近七天的距离统计', right: 20, top: 30 },
+    title: { show: true, text: '公里', right: 20, top: 30 },
     xAxis: { data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日']},
     legend: { show: false },
     series: [{ name: '', barStyle: { 
@@ -73,33 +73,44 @@ struct DistanceTrendPage {
   private calculateDistanceStats() {
     const distanceByDate: Map<string, number> = new Map()
     for (const item of this.stepChartData) {
+      // 统一日期格式：将 item.date 转换为 yyyy-MM-dd 格式以匹配 this.dates
+      let normalizedDate = item.date
+      if (normalizedDate.includes('/')) {
+        // 如果日期是 yyyy/MM/dd 格式，转换为 yyyy-MM-dd
+        normalizedDate = normalizedDate.replace(/\//g, '-')
+      }
       const distance = item.steps * STEPS_TO_DISTANCE_RATIO // 转换为米
-      distanceByDate.set(item.date, Math.max(0, distance))
+      distanceByDate.set(normalizedDate, Math.max(0, distance))
+      Log.i(`[DistanceTrendPage] 处理数据: date=${normalizedDate}, steps=${item.steps}, distance=${distance}米`)
     }
 
-    const today = DateUtils.getYMD()
+    // 使用与 this.dates 一致的格式（yyyy-MM-dd）
+    const today = this.formatYMD(new Date())
     const todaySteps = StepData.getCurrentSteps()
     const todayDistance = todaySteps * STEPS_TO_DISTANCE_RATIO
     if (todayDistance > 0 && this.dates.indexOf(today) >= 0) {
       distanceByDate.set(today, todayDistance)
+      Log.i(`[DistanceTrendPage] 今日数据: date=${today}, steps=${todaySteps}, distance=${todayDistance}米`)
     }
 
     this.allDistance = 0
     let rewardDays = 0
     const totalDays = this.dates.length > 0 ? this.dates.length : Math.max(1, this.stepChartData.length)
 
+    Log.i(`[DistanceTrendPage] 开始计算总距离: dates=${this.dates.length}天, distanceByDate.size=${distanceByDate.size}`)
     for (const date of this.dates) {
       const distance = distanceByDate.get(date) ?? 0
       this.allDistance = this.allDistance + distance
+      Log.i(`[DistanceTrendPage] 日期 ${date}: distance=${distance}米, 累计=${this.allDistance}米`)
       if (distance >= this.targetDistance) {
         rewardDays = rewardDays + 1
       }
     }
     this.argDistance = this.allDistance / totalDays
 
-    // 目标进度显示今日距离
-    this.currentDistance = todayDistance
-    Log.i(`calculateDistanceStats: targetDistance=${this.targetDistance}米, currentDistance=${this.currentDistance}米`)
+    // 目标进度显示今日距离（四舍五入到整数）
+    this.currentDistance = Math.round(todayDistance)
+    Log.i(`[DistanceTrendPage] calculateDistanceStats: targetDistance=${this.targetDistance}米, currentDistance=${this.currentDistance}米, allDistance=${this.allDistance}米, argDistance=${this.argDistance}米`)
 
     if (this.viewMode === 'year') {
       this.reward_str = ''
@@ -117,7 +128,10 @@ struct DistanceTrendPage {
     // 构造图表数据：每一天都展示，未同步的数据置零（单位为公里）
     for (let i = 0; i < this.dates.length; i++) {
       const distance = distanceByDate.get(this.dates[i]) ?? 0
-      const distanceKm = distance / 1000 // 转换为公里用于图表显示
+      // 转换为公里并格式化，四舍五入到最多1位小数
+      let distanceKm = distance / 1000
+      // 四舍五入到1位小数，避免浮点误差
+      distanceKm = parseFloat(distanceKm.toFixed(1))
       if (this.viewMode === 'week') {
         const d = this.parseDateFromYMD(this.dates[i])
         const jsDay = d.getDay()
@@ -314,13 +328,13 @@ struct DistanceTrendPage {
 
   private loadByViewMode() {
     if (this.viewMode === 'week') {
-      this.seriesRadiusOption.setVal({ title: { text: '距离' } })
+      this.seriesRadiusOption.setVal({ title: { text: '公里' } })
       this.loadWeekWindow()
     } else if (this.viewMode === 'month') {
-      this.seriesRadiusOption.setVal({ title: { text: '距离' } })
+      this.seriesRadiusOption.setVal({ title: { text: '公里' } })
       this.loadDailyWindow(30)
     } else {
-      this.seriesRadiusOption.setVal({ title: { text: '距离' } })
+      this.seriesRadiusOption.setVal({ title: { text: '公里' } })
       this.showYearRecord()
       // 顶部区间显示
       const end = new Date(this.windowEndDate)
@@ -482,7 +496,7 @@ struct DistanceTrendPage {
           // 目标进度 - 白色卡片容器
           Column(){
             TargetProgressView({
-              targetName: '距离',
+              targetName: '米',
               currentValue: this.currentDistance,
               targetValue: this.targetDistance,
               unit: '米'
@@ -499,12 +513,12 @@ struct DistanceTrendPage {
             Row(){
               Column(){
                 Text('总距离').fontSize(12).fontColor('#666666')
-                Text((this.allDistance / 1000).toFixed(2)).fontWeight(600).fontSize(30).margin({ top: 6 })
+                Text((this.allDistance / 1000).toFixed(1)).fontWeight(600).fontSize(30).margin({ top: 6 })
                 Text('公里').fontSize(12).fontColor('#666666')
               }.layoutWeight(1)
               Column(){
                 Text('平均每日距离').fontSize(12).fontColor('#666666')
-                Text((this.argDistance / 1000).toFixed(2)).fontWeight(600).fontSize(30).margin({ top: 6 })
+                Text((this.argDistance / 1000).toFixed(1)).fontWeight(600).fontSize(30).margin({ top: 6 })
                 Text('公里').fontSize(12).fontColor('#666666')
               }.layoutWeight(1)
             }

@@ -80,9 +80,33 @@ struct SportingPage {
     },50)
   }
 
-  private stopSport(){
-    Utils.showToast('运动已结束')
+  /**
+   * 停止运动
+   * @returns 是否成功保存记录（true=已保存，false=时长不足未保存）
+   */
+  private stopSport(): boolean {
     Utils.keepScreenON(false)
+    
+    // 检查运动时长是否少于 1 分钟（60000 毫秒）
+    const MIN_DURATION_MS = 60000 // 1 分钟
+    if (this.allSportTimeStamp < MIN_DURATION_MS) {
+      // 少于 1 分钟，显示提示对话框，不保存记录
+      this.showShortDurationDialog()
+      // 重置状态但不保存记录
+      this.isSportStart = false
+      this.isSportPause = false
+      this.startSportStepsNum = 0;
+      this.startSportTimeStamp = 0;
+      this.lastPauseSportTimeStamp = 0;
+      this.allPauseSportTimeStamp = 0;
+      this.lastPauseSportStep = 0
+      this.allPauseSportStep = 0
+      clearTimeout(this.sportTimeout)
+      return false // 未保存
+    }
+    
+    // 大于等于 1 分钟，正常保存记录
+    Utils.showToast('运动已结束')
     AppDataManager.insertSportRecord(this.startSportTimeStamp,this.allSportTimeStamp
         ,this.sportStepsNum,this.sportType,0,this.sportCals)
 
@@ -97,6 +121,20 @@ struct SportingPage {
     clearTimeout(this.sportTimeout)
 
     AppDataManager.setSportDataStatus(true,this.sportType)
+    return true // 已保存
+  }
+
+  private showShortDurationDialog(){
+    let dialog = new CustomDialogController({ builder: CommonDialog({
+      cancel: ()=> {
+        dialog.close()
+      },
+      confirm: ()=> {
+        dialog.close()
+      },
+      title:'提示',content:'运动时长少于 1 分钟，未记录'
+    ,}),alignment: DialogAlignment.Center,gridCount:4,cancel: this.exitApp,autoCancel:false })
+    dialog.open()
   }
 
   onPageShow(): void {
@@ -131,8 +169,14 @@ struct SportingPage {
         dialog.close()
       },
       confirm: ()=> {
-        router.back()
         dialog.close()
+        // 退出时先停止运动（会检查时长并提示）
+        const saved = this.stopSport()
+        // 只有成功保存记录时才关闭页面
+        if (saved) {
+          router.back()
+        }
+        // 如果时长不足，不关闭页面，让用户看到提示对话框
       },
       title:'退出提示',content:this.data1.str1+'中，是否退出？'
     ,}),alignment: DialogAlignment.Center,gridCount:4,cancel: this.exitApp,autoCancel:false })

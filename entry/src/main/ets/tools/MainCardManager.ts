@@ -67,9 +67,9 @@ export class MainCardManager {
       case MainCardManager.STEPS_COUNT_TIME:
         return "时间计时";
       case MainCardManager.STEPS_BODY_DATA:
-        return "体重记录";
+        return "身体数据";
       case MainCardManager.STEPS_WEIGHT:
-        return  "身体数据";
+        return  "体重记录";
     }
   }
 

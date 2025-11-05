@@ -37,6 +37,8 @@
     "pages/WeightCalendarPage",
     "pages/BasalMetabolismPage",
     "pages/BodyMassIndexPage",
-    "pages/UserProfilePage"
+    "pages/UserProfilePage",
+    "pages/LoginPage",
+    "pages/MyDataPage"
   ]
 }

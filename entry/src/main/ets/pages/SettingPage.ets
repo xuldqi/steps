@@ -5,7 +5,6 @@ import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { Utils } from '../tools/Utils';
 import { bundleManager } from '@kit.AbilityKit';
 import { Log } from '../tools/Logger';
-import { SettingItemView } from '../view/SettingItemView';
 
 @Entry
 @Component

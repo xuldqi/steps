@@ -149,6 +149,10 @@ export struct TargetProgressView {
   }
 
   private formatDisplayNumber(value: number): string {
+    // 如果单位是"米"，直接四舍五入到整数，不显示小数
+    if (this.unit === '米') {
+      return Math.round(value).toString()
+    }
     const rounded = Math.round(value * 100) / 100
     let text = rounded.toFixed(2)
     if (text.indexOf('.') >= 0) {

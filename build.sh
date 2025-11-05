@@ -10,3 +10,5 @@ export PATH="$PATH:/Applications/DevEco-Studio.app/Contents/sdk/default/hms/tool
 
 
 
+
+
