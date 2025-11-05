@@ -301,8 +301,8 @@ struct UserProfilePage {
           }
           Log.i('[UserProfilePage] syncLatestWeight: 查询结果数量=' + (result ? result.length : 0))
           if (result && result.length > 0) {
-            const sorted = [...result].sort((a, b) => b.time - a.time)
-            const latestRecord = sorted[0]
+            // 获取最新的体重记录（已经按时间倒序排列）
+            const latestRecord = result[0]
             Log.i('[UserProfilePage] syncLatestWeight: 最新记录 data=' + latestRecord.data)
             // 移除可能的单位字符，只保留数字和小数点
             let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
@@ -751,8 +751,8 @@ struct UserProfilePage {
           }
           this.initialWeight = weightValue
           this.hasSetInitialWeight = true
+          await userDataManager.updateWeight(weightValue)
           Log.i('[UserProfilePage] openInitialWeightDialog confirm 保存初始=' + formatted)
-          await this.syncLatestWeight()
           await userDataManager.refreshMetrics()
           const metricsAfterInit = await userDataManager.loadMetrics()
           this.updateBodyData(metricsAfterInit)

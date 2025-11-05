@@ -66,42 +66,35 @@ struct BodyMassIndexPage {
 
   private heightDialog?: CustomDialogController
   private weightDialog?: CustomDialogController
-  private metricsUnsubscribe: (() => void) | null = null
 
-  onPageShow(): void {
-    // 进入时主动刷新一次，避免返回页面显示旧值
-    void (async (): Promise<void> => {
-      await userDataManager.refreshMetrics()
-      await this.loadInitialData()
-    })()
-    // 设置沉浸式状态栏和标题栏
-    this.setImmersiveStatusBar()
-  }
-
-  aboutToDisappear(): void {
-    // 恢复默认状态栏
-    this.restoreStatusBar()
-    if (this.metricsUnsubscribe) {
-      this.metricsUnsubscribe()
-      this.metricsUnsubscribe = null
-    }
-  }
+  private metricsUnsubscribe?: () => void
 
   aboutToAppear(): void {
-    // 订阅全局 metrics，确保别处修改能立刻反映
+    // 建立订阅，确保任何时刻的数据更新都能立刻回调
     this.metricsUnsubscribe?.()
-    this.metricsUnsubscribe = userDataManager.subscribe((m) => {
-      if (typeof m.height === 'number' && m.height > 0) {
-        this.heightInput = m.height
-      }
-      if (typeof m.weight === 'number' && m.weight > 0) {
-        this.weightInput = m.weight
-      }
+    this.metricsUnsubscribe = userDataManager.subscribe((metrics) => {
+      this.heightInput = metrics.height
+      this.weightInput = metrics.weight
+      // 自动重新计算BMI
       this.calculateBmi(false)
     })
   }
 
-  
+  aboutToDisappear(): void {
+    // 取消订阅
+    this.metricsUnsubscribe?.()
+    this.metricsUnsubscribe = undefined
+    // 恢复默认状态栏
+    this.restoreStatusBar()
+  }
+
+  async onPageShow(): Promise<void> {
+    // 先刷新数据，确保获取最新值
+    await userDataManager.refreshMetrics()
+    await this.loadInitialData()
+    // 设置沉浸式状态栏和标题栏
+    this.setImmersiveStatusBar()
+  }
 
   private setImmersiveStatusBar(): void {
     if (EntryAbility.myWindowClass) {
@@ -152,8 +145,7 @@ struct BodyMassIndexPage {
             return
           }
           if (result && result.length > 0) {
-            const sorted = [...result].sort((a, b) => b.time - a.time)
-            const latestRecord = sorted[0]
+            const latestRecord = result[0]
             let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
             const heightValue = parseFloat(cleanData)
             if (!isNaN(heightValue) && heightValue > 0) {
@@ -179,8 +171,7 @@ struct BodyMassIndexPage {
             return
           }
           if (result && result.length > 0) {
-            const sorted = [...result].sort((a, b) => b.time - a.time)
-            const latestRecord = sorted[0]
+            const latestRecord = result[0]
             let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
             const weightValue = parseFloat(cleanData)
             if (!isNaN(weightValue) && weightValue > 0) {
@@ -219,12 +210,12 @@ struct BodyMassIndexPage {
         confirm: async (value: number, _type: number) => {
           this.heightDialog?.close()
           this.heightInput = Math.round(value * 10) / 10
+          // 更新数据并广播
+          await userDataManager.updateHeight(this.heightInput)
+          await userDataManager.refreshMetrics()
           this.saveInputs()
           // 自动重新计算BMI
           this.calculateBmi(true)
-          // 同步全局并广播
-          await userDataManager.updateHeight(this.heightInput)
-          await userDataManager.refreshMetrics()
         }
       }),
       autoCancel: true
@@ -250,12 +241,12 @@ struct BodyMassIndexPage {
         confirm: async (value: number, _type: number) => {
           this.weightDialog?.close()
           this.weightInput = Math.round(value * 10) / 10
+          // 更新数据并广播
+          await userDataManager.updateWeight(this.weightInput)
+          await userDataManager.refreshMetrics()
           this.saveInputs()
           // 自动重新计算BMI
           this.calculateBmi(true)
-          // 同步全局并广播
-          await userDataManager.updateWeight(this.weightInput)
-          await userDataManager.refreshMetrics()
         }
       }),
       autoCancel: true

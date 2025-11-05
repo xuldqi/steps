@@ -2,7 +2,7 @@ import { router } from '@kit.ArkUI'
 import { CommonTitleView } from '../view/CommonTitleView'
 import preferencesUtil from '../tools/DataPreUtils'
 import { Utils } from '../tools/Utils'
-import { userDataManager, UserMetrics } from '../services/UserDataManager'
+import { userDataManager } from '../services/UserDataManager'
 import appDataManager, { AppDataManager } from '../tools/AppDataManager'
 import { BodyRecordModel } from '../appdata/Model'
 
@@ -89,110 +89,64 @@ struct BasalMetabolismPage {
   @State pickerSelectedIndex: number = 0
   private pickerDecimals: number = 0
 
-  // 用于强制触发 UI 重组
-  @State private uiVersion: number = 0
-
-  private bumpUI(): void {
-    this.uiVersion++
-  }
-
-  // 订阅句柄，进入页面时建立，离开时释放，保证实时刷新
-  private metricsUnsubscribe: (() => void) | null = null
+  private metricsUnsubscribe?: () => void
 
   aboutToAppear(): void {
-    // 提前建立订阅，确保任何时刻的数据更新都能立刻回调
+    // 建立订阅，确保任何时刻的数据更新都能立刻回调
     this.metricsUnsubscribe?.()
-    this.metricsUnsubscribe = userDataManager.subscribe((m) => {
-      this.updateMetrics(m)
+    this.metricsUnsubscribe = userDataManager.subscribe(async (metrics) => {
+      this.selectedGender = metrics.gender === 'female' ? 'female' : 'male'
+      // 优先使用缓存值（上次计算的输入），否则使用最新数据
+      const cachedHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'bmr_last_height', metrics.height) as number
+      const cachedWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'bmr_last_weight', metrics.weight) as number
+      const cachedAge = await preferencesUtil.getPreferenceValue('steps_ohos', 'bmr_last_age', metrics.age) as number
+      this.heightInput = cachedHeight > 0 ? cachedHeight : metrics.height
+      this.weightInput = cachedWeight > 0 ? cachedWeight : metrics.weight
+      this.ageInput = cachedAge > 0 ? cachedAge : metrics.age
+      this.updateResult(false)
     })
   }
 
+  aboutToDisappear(): void {
+    // 取消订阅
+    this.metricsUnsubscribe?.()
+    this.metricsUnsubscribe = undefined
+  }
+
   async onPageShow(): Promise<void> {
-    // 进入时先拉取一次，保证回到页面即为最新
+    // 先刷新数据，确保获取最新值
     await userDataManager.refreshMetrics()
     await this.loadInitialData()
   }
 
-  aboutToDisappear(): void {
-    if (this.metricsUnsubscribe) {
-      this.metricsUnsubscribe()
-      this.metricsUnsubscribe = null
-    }
-  }
-
-  private updateMetrics(metrics: UserMetrics): void {
-    // 统一更新所有 @State，确保界面刷新
-    // 与个人详情页面保持同步，直接使用最新的 metrics 值
-    if (metrics.gender === 'female' || metrics.gender === 'male') {
-      this.selectedGender = metrics.gender
-    }
-    // 年龄：直接使用 metrics 中的值，确保同步
-    const nextAge = Number(metrics.age)
-    if (!Number.isNaN(nextAge) && nextAge >= 0) {
-      this.ageInput = nextAge
-    }
-    // 身高：直接使用 metrics 中的值，确保同步
-    const nextHeight = Number(metrics.height)
-    if (!Number.isNaN(nextHeight) && nextHeight >= 0) {
-      this.heightInput = nextHeight
-    }
-    // 体重：直接使用 metrics 中的值，确保同步
-    const nextWeight = Number(metrics.weight)
-    if (!Number.isNaN(nextWeight) && nextWeight >= 0) {
-      this.weightInput = nextWeight
-    }
-    this.updateResult(false)
-    this.bumpUI()
-  }
-
   private async loadInitialData(): Promise<void> {
-    // 先从 preferences 直接读取数据，确保能获取到值
-    const genderPref = await preferencesUtil.getPreferenceValue('steps_ohos', 'gender', 'male') as string
-    this.selectedGender = genderPref === 'female' ? 'female' : 'male'
-    
-    const agePref = await preferencesUtil.getPreferenceValue('steps_ohos', 'age', 0) as number
-    if (agePref > 0) {
-      this.ageInput = agePref
-    }
-    
-    const heightPref = await preferencesUtil.getPreferenceValue('steps_ohos', 'height', 0) as number
-    if (heightPref > 0) {
-      this.heightInput = heightPref
-    }
-    
-    const weightPref = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight', 0) as number
-    if (weightPref > 0) {
-      this.weightInput = weightPref
-    }
-    
-    // 然后从数据库同步最新身高和体重数据到 preferences（这会直接设置 @State 变量）
-    await this.syncLatestHeight()
-    await this.syncLatestWeight()
-    
-    // 等待一小段时间确保数据已同步
-    await new Promise<void>((resolve: () => void) => setTimeout(resolve, 200))
-    
-    // 再次从 preferences 直接读取，确保获取到同步后的最新值
-    const updatedAge = await preferencesUtil.getPreferenceValue('steps_ohos', 'age', 0) as number
-    if (updatedAge > 0 && (this.ageInput <= 0 || Math.abs(this.ageInput - updatedAge) > 0.01)) {
-      this.ageInput = updatedAge
-    }
-    
-    const updatedHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'height', 0) as number
-    if (updatedHeight > 0 && (this.heightInput <= 0 || Math.abs(this.heightInput - updatedHeight) > 0.01)) {
-      this.heightInput = updatedHeight
-    }
-    
-    const updatedWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight', 0) as number
-    if (updatedWeight > 0 && (this.weightInput <= 0 || Math.abs(this.weightInput - updatedWeight) > 0.01)) {
-      this.weightInput = updatedWeight
-    }
-    
-    // 最后再拉一次 metrics 并统一走 updateMetrics，确保界面刷新
-    const finalMetrics = await userDataManager.loadMetrics()
-    this.updateMetrics(finalMetrics)
+    // 使用统一的数据管理服务加载数据
+    const metrics = await userDataManager.loadMetrics()
+    this.selectedGender = metrics.gender === 'female' ? 'female' : 'male'
+
+    // 从数据库同步最新身高和体重数据（使用 Promise 包装）
+    await Promise.all([
+      this.syncLatestHeight(),
+      this.syncLatestWeight()
+    ])
+
+    // 等待一小段时间确保数据已同步到 preferences
+    await new Promise<void>((resolve: () => void) => setTimeout(resolve, 100))
+
+    // 重新加载 metrics 以确保获取最新数据
+    const updatedMetrics = await userDataManager.loadMetrics()
+
+    // 检查是否有缓存的基础代谢值（上次计算时的输入值）
+    const cachedHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'bmr_last_height', updatedMetrics.height) as number
+    const cachedWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'bmr_last_weight', updatedMetrics.weight) as number
+    const cachedAge = await preferencesUtil.getPreferenceValue('steps_ohos', 'bmr_last_age', updatedMetrics.age) as number
+
+    // 优先使用缓存值（上次计算的输入），否则使用最新数据
+    this.heightInput = cachedHeight > 0 ? cachedHeight : updatedMetrics.height
+    this.weightInput = cachedWeight > 0 ? cachedWeight : updatedMetrics.weight
+    this.ageInput = cachedAge > 0 ? cachedAge : updatedMetrics.age
+
     this.updateResult(false)
-    this.bumpUI()
   }
 
   private async syncLatestHeight(): Promise<void> {
@@ -205,17 +159,13 @@ struct BasalMetabolismPage {
             return
           }
           if (result && result.length > 0) {
-            const sorted = [...result].sort((a, b) => b.time - a.time)
-            const latestRecord = sorted[0]
+            const latestRecord = result[0]
             let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
             const heightValue = parseFloat(cleanData)
             if (!isNaN(heightValue) && heightValue > 0) {
-              // 立即更新 UI，确保返回即可见
-              this.heightInput = heightValue
               const currentHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'height', 0) as number
               if (Math.abs(currentHeight - heightValue) > 0.01) {
                 await userDataManager.updateHeight(heightValue)
-                await userDataManager.refreshMetrics()
               }
             }
           }
@@ -235,17 +185,13 @@ struct BasalMetabolismPage {
             return
           }
           if (result && result.length > 0) {
-            const sorted = [...result].sort((a, b) => b.time - a.time)
-            const latestRecord = sorted[0]
+            const latestRecord = result[0]
             let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
             const weightValue = parseFloat(cleanData)
             if (!isNaN(weightValue) && weightValue > 0) {
-              // 立即更新 UI，确保返回即可见
-              this.weightInput = weightValue
               const currentWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight', 0) as number
               if (Math.abs(currentWeight - weightValue) > 0.01) {
                 await userDataManager.updateWeight(weightValue)
-                await userDataManager.refreshMetrics()
               }
             }
           }
@@ -291,15 +237,12 @@ struct BasalMetabolismPage {
 
   private persistInputs(bmrValue: number): void {
     // 使用统一的数据管理服务更新数据
-    void (async () => {
-      await userDataManager.updateMetrics({
+    void userDataManager.updateMetrics({
       gender: this.selectedGender,
       age: this.ageInput,
       height: this.heightInput,
       weight: this.weightInput
-      })
-      await userDataManager.refreshMetrics()
-    })()
+    })
 
     // 保存基础代谢相关缓存
     void preferencesUtil.putPreferenceValue('steps_ohos', 'bmr_last_value', bmrValue)
@@ -440,8 +383,6 @@ struct BasalMetabolismPage {
     }
 
     const selectedValue = this.pickerValueList[this.pickerSelectedIndex]
-    
-    // 先更新本地 @State
     switch (this.pickerField) {
       case 'age':
         this.ageInput = Math.round(selectedValue)
@@ -457,32 +398,18 @@ struct BasalMetabolismPage {
         break
     }
 
-    // 刷新全局状态并广播
-    await userDataManager.refreshMetrics()
-    
-    // 直接拉一次最新 metrics，确保本页立即一致
-    const metricsAfter = await userDataManager.loadMetrics()
-    this.updateMetrics(metricsAfter)
-
     this.closePicker()
+    // 刷新并广播数据更新
+    await userDataManager.refreshMetrics()
     this.updateResult()
   }
 
   private async onGenderSelected(option: GenderOption): Promise<void> {
     if (this.selectedGender !== option.value) {
-      // 先更新本地 @State
       this.selectedGender = option.value
-      
-      // 更新全局状态
       await userDataManager.updateGender(this.selectedGender)
-      
-      // 刷新全局状态并广播
+      // 刷新并广播数据更新
       await userDataManager.refreshMetrics()
-      
-      // 直接拉一次最新 metrics，确保本页立即一致
-      const metricsAfter = await userDataManager.loadMetrics()
-      this.updateMetrics(metricsAfter)
-      
       this.updateResult()
     }
   }
@@ -625,11 +552,11 @@ struct BasalMetabolismPage {
       .margin({ top: 16 })
       .justifyContent(FlexAlign.SpaceBetween)
 
-      this.buildInfoRow('年龄', () => (this.ageInput > 0 ? `${this.ageInput} 岁` : '请选择'), () => this.openPicker('age'))
+      this.infoRow('年龄', this.getFormattedAge(), () => this.openPicker('age'))
       this.divider()
-      this.buildInfoRow('身高', () => (this.heightInput > 0 ? `${this.heightInput.toFixed(1)} 厘米` : '请选择'), () => this.openPicker('height'))
+      this.infoRow('身高', this.getFormattedHeight(), () => this.openPicker('height'))
       this.divider()
-      this.buildInfoRow('体重', () => (this.weightInput > 0 ? `${this.weightInput.toFixed(1)} 公斤` : '请选择'), () => this.openPicker('weight'))
+      this.infoRow('体重', this.getFormattedWeight(), () => this.openPicker('weight'))
     }
     .padding({ top: 24, bottom: 12, left: 20, right: 20 })
     .backgroundColor('#FFFFFF')
@@ -763,16 +690,16 @@ struct BasalMetabolismPage {
   }
 
   @Builder
-  private buildInfoRow(label: string, valueBuilder: () => string, handler: () => void) {
+  private infoRow(label: string, value: string, handler: () => void) {
     Row() {
       Text(label)
         .fontSize(16)
         .fontColor('#333333')
         .layoutWeight(1)
 
-      Text(valueBuilder())
+      Text(value)
         .fontSize(15)
-        .fontColor(valueBuilder() === '请选择' ? '#999999' : '#0cc291')
+        .fontColor(value === '请选择' ? '#999999' : '#0cc291')
         .margin({ right: 8 })
 
       Image($r('app.media.right_point'))

@@ -240,18 +240,7 @@ struct MainTabs {
       this.userAge = metrics.age
       this.userGender = metrics.gender
       this.calculateBodyMetrics()
-      // 同步刷新首页卡片文案
-      this.updateMainCard()
     })
-    // 进入时立即拉取一次，避免回到“我的”页显示旧值
-    void (async (): Promise<void> => {
-      const metrics = await userDataManager.loadMetrics()
-      if (typeof metrics.height === 'number' && metrics.height > 0) this.currentHeight = metrics.height
-      if (typeof metrics.weight === 'number' && metrics.weight > 0) this.currentWeight = metrics.weight
-      if (typeof metrics.age === 'number' && metrics.age >= 0) this.userAge = metrics.age
-      if (metrics.gender) this.userGender = metrics.gender
-      this.calculateBodyMetrics()
-    })()
     this.syncUserProfile()
     this.loadGoalTargets()
     this.requestTodaySportSummary()
@@ -264,7 +253,10 @@ struct MainTabs {
   aboutToDisappear(): void {
     this.stopDailyWatcher()
     targetManager.removeListener(this.onTargetsChanged)
-    // 保留用户数据订阅（避免跳转期间错过广播）
+    if (this.metricsUnsubscribe) {
+      this.metricsUnsubscribe()
+      this.metricsUnsubscribe = null
+    }
     if (this.unsubscribe) {
       this.unsubscribe()
       this.unsubscribe = null
@@ -500,33 +492,6 @@ struct MainTabs {
   }
 
   async onPageShow(){
-    // 返回时重新建立订阅，确保收到全局广播
-    this.metricsUnsubscribe?.()
-    this.metricsUnsubscribe = userDataManager.subscribe((metrics) => {
-      this.currentHeight = metrics.height
-      this.currentWeight = metrics.weight
-      this.userAge = metrics.age
-      this.userGender = metrics.gender
-      this.calculateBodyMetrics()
-      // 同步刷新首页卡片文案
-      this.updateMainCard()
-    })
-    
-    // 第一步：优先从数据库直接读取最新记录，确保返回即可见最新值
-    await Promise.all([
-      this.syncLatestHeightFromDB(),
-      this.syncLatestWeightFromDB()
-    ])
-    
-    // 第二步：刷新全局状态并应用
-    await userDataManager.refreshMetrics()
-    const latestMetrics = await userDataManager.loadMetrics()
-    if (typeof latestMetrics.height === 'number' && latestMetrics.height > 0) this.currentHeight = latestMetrics.height
-    if (typeof latestMetrics.weight === 'number' && latestMetrics.weight > 0) this.currentWeight = latestMetrics.weight
-    if (typeof latestMetrics.age === 'number' && latestMetrics.age >= 0) this.userAge = latestMetrics.age
-    if (latestMetrics.gender) this.userGender = latestMetrics.gender
-    this.calculateBodyMetrics()
-    
     //目标步数初始化
     await targetManager.loadTargets()
     this.tarSteps = targetManager.getTarget('step_target')
@@ -541,9 +506,21 @@ struct MainTabs {
     //卡片信息更新
     this.updateMainCard()
     
-    // 第三步：后台同步数据库到全局状态（不阻塞UI）
-    void this.syncLatestHeight()
-    void this.syncLatestWeight()
+    // 加载身体数据（包括从数据库同步最新身高和体重）
+    await this.loadBodyData()
+    // 从数据库获取最新身高和体重记录并同步
+    await this.syncLatestHeight()
+    await this.syncLatestWeight()
+    // 兜底：直接从本地偏好读取一次，确保返回后卡片立即显示最新值
+    const latestHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'height', 0) as number
+    const latestWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight', 0) as number
+    if (typeof latestHeight === 'number' && latestHeight > 0) {
+      this.currentHeight = latestHeight
+    }
+    if (typeof latestWeight === 'number' && latestWeight > 0) {
+      this.currentWeight = latestWeight
+    }
+    this.calculateBodyMetrics()
 
     StepData.checkIsFirstOpenToday()//每次初始化一次步数信息
     //检查权限,注册步数监听
@@ -597,31 +574,28 @@ struct MainTabs {
    * 更新卡片的列表
    * */
   private updateMainCard(){
-    const mainCards:ArrayList<number> = mainCardManager.getCardSet();
-    const nextLine1:Array<MainCardData> = []
-    const nextLine2:Array<MainCardData> = []
-    const nextLine3:Array<MainCardData> = []
+    this.line1.length = 0;
+    this.line2.length = 0;
+    this.line3.length = 0;
+    //mainCardContainer.removeAllViews();
+    let mainCards:ArrayList<number> = mainCardManager.getCardSet();
     for(let i=0;i<mainCards.length;i++){
-      const cardType = mainCards[i]
-      if(nextLine1.length<2){
-        nextLine1.push(this.createMainCardData(cardType, i))
-        Log.i("line1:"+cardType)
+      if(this.line1.length<2){
+        this.line1.push(this.createMainCardData(mainCards[i], i))
+        Log.i("line1:"+mainCards[i])
         continue
       }
-      if(nextLine2.length<2){
-        nextLine2.push(this.createMainCardData(cardType, i-2))
-        Log.i("line2:"+cardType)
+      if(this.line2.length<2){
+        this.line2.push(this.createMainCardData(mainCards[i], i-2))
+        Log.i("line2:"+mainCards[i])
         continue
       }
-      if(nextLine3.length<2){
-        nextLine3.push(this.createMainCardData(cardType, i-4))
-        Log.i("line3:"+cardType)
+      if(this.line3.length<2){
+        this.line3.push(this.createMainCardData(mainCards[i], i-4))
+        Log.i("line3:"+mainCards[i])
         continue
       }
     }
-    this.line1 = nextLine1
-    this.line2 = nextLine2
-    this.line3 = nextLine3
 
     if (mainCardManager.getMainCardChanged()) {
       mainCardManager.setMainCardChangedAlreadyUpdate();
@@ -630,23 +604,10 @@ struct MainTabs {
 
   private createMainCardData(item:number, index:number): MainCardData {
     const metrics = this.cardMetrics[item]
-    let subtitle = metrics?.subtitle ?? appDataManager.getMainCardSubStr(item)
-    let value = metrics?.value ?? appDataManager.getMainCardSubData(item)
-    let prevTitle = metrics?.prevTitle ?? appDataManager.getMainCardLastTitle(item)
-    let prevValue = metrics?.prevValue ?? appDataManager.getMainCardLastData(item)
-
-    if (item === MainCardManager.STEPS_BODY_DATA) {
-      subtitle = '身高'
-      value = this.currentHeight > 0 ? `${this.currentHeight.toFixed(1)}厘米` : '未记录'
-      prevTitle = ''
-      prevValue = ''
-    } else if (item === MainCardManager.STEPS_WEIGHT) {
-      subtitle = '当前'
-      value = this.currentWeight > 0 ? `${this.currentWeight.toFixed(1)}公斤` : '未记录'
-      prevTitle = ''
-      prevValue = ''
-    }
-
+    const subtitle = metrics?.subtitle ?? appDataManager.getMainCardSubStr(item)
+    const value = metrics?.value ?? appDataManager.getMainCardSubData(item)
+    const prevTitle = metrics?.prevTitle ?? appDataManager.getMainCardLastTitle(item)
+    const prevValue = metrics?.prevValue ?? appDataManager.getMainCardLastData(item)
     const data: MainCardData = {
       item,
       index,
@@ -671,7 +632,6 @@ struct MainTabs {
       prevTitle: metrics.prevTitle ?? previous.prevTitle,
       prevValue: metrics.prevValue ?? previous.prevValue
     }
-    // 避免对象扩展运算符带来的 ArkTS 限制，直接赋值
     this.cardMetrics[type] = merged
     this.updateMainCard()
   }
@@ -869,86 +829,32 @@ struct MainTabs {
     this.calculateBodyMetrics()
   }
 
-  private async syncLatestHeightFromDB(): Promise<void> {
-    // 从数据库直接读取最新身高，立即更新UI（不等待全局状态）
-    return new Promise<void>((resolve) => {
-      appDataManager.findBodyRecordByType(AppDataManager.TYPE_HEIGHT, {
-        onDataResult: (type: number, result: Array<BodyRecordModel>, isFirst: boolean): void => {
-          if (type !== AppDataManager.TYPE_HEIGHT) {
-            resolve()
-            return
-          }
-          if (result && result.length > 0) {
-            const sorted = [...result].sort((a, b) => b.time - a.time)
-            const latestRecord = sorted[0]
-            let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
-            const heightValue = parseFloat(cleanData)
-            if (!isNaN(heightValue) && heightValue > 0) {
-              // 立即更新UI，确保返回即可见
-              this.currentHeight = heightValue
-              this.calculateBodyMetrics()
-              this.updateMainCard()
-            }
-          }
-          resolve()
-        }
-      }, true) // isReturnFirstData = true，只获取最新一条
-    })
-  }
-
   private async syncLatestHeight() {
     // 从数据库获取最新的身高记录，并同步到 preferences 和首页显示
     appDataManager.findBodyRecordByType(AppDataManager.TYPE_HEIGHT, {
       onDataResult: async (type: number, result: Array<BodyRecordModel>, isFirst: boolean): Promise<void> => {
         if (type !== AppDataManager.TYPE_HEIGHT) return
         if (result && result.length > 0) {
-          const sorted = [...result].sort((a, b) => b.time - a.time)
-          const latestRecord = sorted[0]
+          // 获取最新的身高记录（已经按时间倒序排列）
+          const latestRecord = result[0]
           // 移除可能的单位字符，只保留数字和小数点
           let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
           const heightValue = parseFloat(cleanData)
           if (!isNaN(heightValue) && heightValue > 0) {
-            // 立即更新首页显示，确保返回即可见最新值
-            this.currentHeight = heightValue
-            this.calculateBodyMetrics()
-            this.updateMainCard()
-            // 如与偏好不一致，再同步到全局
-            const storedHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'height', 0) as number
-            if (Math.abs(storedHeight - heightValue) > 0.01) {
+            // 如果数据库中的身高与 preferences 中的不一致，更新 preferences
+            const currentHeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'height', 0) as number
+            if (Math.abs(currentHeight - heightValue) > 0.01) {
+              // 同步到 preferences 并触发更新
               await userDataManager.updateHeight(heightValue)
-              await userDataManager.refreshMetrics()
+            } else {
+              // 即使值相同，也确保首页显示最新数据
+              this.currentHeight = heightValue
+              this.calculateBodyMetrics()
             }
           }
         }
       }
     }, true) // isReturnFirstData = true，只获取最新一条
-  }
-
-  private async syncLatestWeightFromDB(): Promise<void> {
-    // 从数据库直接读取最新体重，立即更新UI（不等待全局状态）
-    return new Promise<void>((resolve) => {
-      appDataManager.findBodyRecordByType(AppDataManager.TYPE_WEIGHT, {
-        onDataResult: (type: number, result: Array<BodyRecordModel>, isFirst: boolean): void => {
-          if (type !== AppDataManager.TYPE_WEIGHT) {
-            resolve()
-            return
-          }
-          if (result && result.length > 0) {
-            const sorted = [...result].sort((a, b) => b.time - a.time)
-            const latestRecord = sorted[0]
-            let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
-            const weightValue = parseFloat(cleanData)
-            if (!isNaN(weightValue) && weightValue > 0) {
-              // 立即更新UI，确保返回即可见
-              this.currentWeight = weightValue
-              this.calculateBodyMetrics()
-              this.updateMainCard()
-            }
-          }
-          resolve()
-        }
-      }, true) // isReturnFirstData = true，只获取最新一条
-    })
   }
 
   private async syncLatestWeight() {
@@ -957,21 +863,21 @@ struct MainTabs {
       onDataResult: async (type: number, result: Array<BodyRecordModel>, isFirst: boolean): Promise<void> => {
         if (type !== AppDataManager.TYPE_WEIGHT) return
         if (result && result.length > 0) {
-          const sorted = [...result].sort((a, b) => b.time - a.time)
-          const latestRecord = sorted[0]
+          // 获取最新的体重记录（已经按时间倒序排列）
+          const latestRecord = result[0]
           // 移除可能的单位字符，只保留数字和小数点
           let cleanData = latestRecord.data.replace(/[^0-9.]/g, '')
           const weightValue = parseFloat(cleanData)
           if (!isNaN(weightValue) && weightValue > 0) {
-            // 立即更新首页显示，确保返回即可见最新值
-            this.currentWeight = weightValue
-            this.calculateBodyMetrics()
-            this.updateMainCard()
-            // 如与偏好不一致，再同步到全局
-            const storedWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight', 0) as number
-            if (Math.abs(storedWeight - weightValue) > 0.01) {
+            // 如果数据库中的体重与 preferences 中的不一致，更新 preferences
+            const currentWeight = await preferencesUtil.getPreferenceValue('steps_ohos', 'weight', 0) as number
+            if (Math.abs(currentWeight - weightValue) > 0.01) {
+              // 同步到 preferences 并触发更新
               await userDataManager.updateWeight(weightValue)
-              await userDataManager.refreshMetrics()
+            } else {
+              // 即使值相同，也确保首页显示最新数据
+              this.currentWeight = weightValue
+              this.calculateBodyMetrics()
             }
           }
         }
@@ -981,29 +887,6 @@ struct MainTabs {
 
   private calculateBodyMetrics(): void {
     // 使用统一的计算方法计算BMI
-    if (this.currentHeight > 0) {
-      this.updateCardMetrics(MainCardManager.STEPS_BODY_DATA, {
-        subtitle: '身高',
-        value: `${this.currentHeight.toFixed(1)}厘米`
-      })
-    } else {
-      this.updateCardMetrics(MainCardManager.STEPS_BODY_DATA, {
-        subtitle: '身高',
-        value: '未记录'
-      })
-    }
-    if (this.currentWeight > 0) {
-      this.updateCardMetrics(MainCardManager.STEPS_WEIGHT, {
-        subtitle: '当前',
-        value: `${this.currentWeight.toFixed(1)}公斤`
-      })
-    } else {
-      this.updateCardMetrics(MainCardManager.STEPS_WEIGHT, {
-        subtitle: '当前',
-        value: '未记录'
-      })
-    }
-
     if (this.currentHeight > 0 && this.currentWeight > 0) {
       const bmiResult = userDataManager.calculateBMI(this.currentHeight, this.currentWeight)
       this.bmi = bmiResult.value
@@ -1015,7 +898,7 @@ struct MainTabs {
     
     // 使用统一的计算方法计算基础代谢率
     if (this.currentHeight > 0 && this.currentWeight > 0 && this.userAge > 0) {
-    this.basalMetabolism = userDataManager.calculateBMR(
+      this.basalMetabolism = userDataManager.calculateBMR(
         this.currentHeight, 
         this.currentWeight, 
         this.userAge, 
@@ -1024,17 +907,6 @@ struct MainTabs {
     } else {
       this.basalMetabolism = 0
     }
-
-    // 避免对象扩展运算符带来的 ArkTS 限制，直接赋值
-    this.cardMetrics[MainCardManager.STEPS_BODY_DATA] = {
-      subtitle: '身高',
-      value: this.currentHeight > 0 ? `${this.currentHeight.toFixed(1)}厘米` : '未记录'
-    }
-    this.cardMetrics[MainCardManager.STEPS_WEIGHT] = {
-      subtitle: '当前',
-      value: this.currentWeight > 0 ? `${this.currentWeight.toFixed(1)}公斤` : '未记录'
-    }
-    this.updateMainCard()
   }
 
   private navigateToGoalDetail(goalKey: string) {
@@ -1452,21 +1324,21 @@ struct MainTabs {
                   Row(){
                     ForEach(this.line1, (item: MainCardData, index: number) => {
                       MainCardView({formData:item})
-                    }, (item: MainCardData) => `${item.item}-${item.index}`)
+                    })
                   }.width('92%').height(this.mainCardH).margin({top:10})
                 }//第一行MainCard
                 if(this.line2.length>0){//第二行MainCard
                   Row(){
                     ForEach(this.line2, (item: MainCardData, index: number) => {
                       MainCardView({formData:item})
-                    }, (item: MainCardData) => `${item.item}-${item.index}`)
+                    })
                   }.width('92%').height(this.mainCardH).margin({top:10})
                 }//第二行MainCard
                 if(this.line3.length>0){//第三行MainCard
                   Row(){
                     ForEach(this.line3, (item: MainCardData, index: number) => {
                       MainCardView({formData:item})
-                    }, (item: MainCardData) => `${item.item}-${item.index}`)
+                    })
                   }.width('92%').height(this.mainCardH).margin({top:10})
                 }//第三行MainCard
 

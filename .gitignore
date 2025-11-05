@@ -27,3 +27,17 @@ node_modules/
 
 # Generated files
 *.generated.*
+
+# Build cache
+.hvigor/
+
+# Certificates and keys (敏感文件)
+*.p12
+*.cer
+*.csr
+*.p7b
+*.jks
+*.keystore
+
+# Configuration files with sensitive data
+agconnect-services.json
