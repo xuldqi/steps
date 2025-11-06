@@ -1,0 +1,59 @@
+# Android
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Build outputs
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+bin/
+gen/
+out/
+release/
+
+# Android Studio
+*.iml
+.idea/
+.gradle/
+build/
+local.properties
+*.hprof
+*.log
+
+# ArkUI X
+.ohpm/
+oh_modules/
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Certificates
+*.p12
+*.jks
+*.keystore
+*.cer
+*.csr
+*.p7b
+
+# Sensitive files
+agconnect-services.json
+
