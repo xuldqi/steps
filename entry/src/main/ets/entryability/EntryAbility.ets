@@ -42,7 +42,7 @@ export default class EntryAbility extends UIAbility {
     hilog.info(0x0000, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
     try {
       if(windowStage !== null && windowStage !== undefined){
-        EntryAbility.myWindowClass = windowStage.getMainWindowSync();
+        // 加载首页内容
         windowStage.loadContent('pages/Index', (err) => {
           if (err.code) {
             hilog.error(0x0000, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err) ?? '');
@@ -51,30 +51,22 @@ export default class EntryAbility extends UIAbility {
           hilog.info(0x0000, 'testTag', 'Succeeded in loading the content.');
         });
 
-        // 设置沉浸式状态栏
-        EntryAbility.myWindowClass.setWindowLayoutFullScreen(true);
-        
-        // 设置状态栏可见
-        EntryAbility.myWindowClass.setWindowSystemBarEnable(['status']);
-        
-        // 设置状态栏为透明，让页面背景色延伸
-        const sysBarProps: window.SystemBarProperties = {
-          statusBarColor: '#00000000', // 透明状态栏
-          statusBarContentColor: '#000000' // 状态栏内容颜色为黑色
-        };
-        
-        EntryAbility.myWindowClass.setWindowSystemBarProperties(sysBarProps);
-        EntryAbility.myWindowClass.setWindowBackgroundColor('#F5F5F5');
-        
-        // 获取状态栏高度并设置页面顶部内边距
-        const avoidArea = EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-        const statusBarHeight = avoidArea.topRect.height;
-        
-        // 设置页面顶部内边距，避免内容被状态栏遮挡
-        EntryAbility.myWindowClass.setWindowSystemBarProperties({
-          statusBarColor: '#00000000',
-          statusBarContentColor: '#000000'
-        });
+        // 统一沉浸式：开启全屏，仅保留状态栏，由页面通过 SafeArea 顶部避让
+        try {
+          const mainWindow = windowStage.getMainWindowSync();
+          EntryAbility.myWindowClass = mainWindow;
+          // 全屏布局
+          mainWindow.setWindowLayoutFullScreen(true);
+          // 仅启用状态栏（不启用导航栏，依据业务需要可调整）
+          mainWindow.setWindowSystemBarEnable(['status']);
+          // 状态栏透明，内容延伸至顶部；具体前景色由各页面按背景调整
+          mainWindow.setWindowSystemBarProperties({
+            statusBarColor: '#00000000',
+            statusBarContentColor: '#000000'
+          });
+        } catch (e) {
+          Log.e('[EntryAbility] 设置沉浸式失败: ' + JSON.stringify(e));
+        }
       }
     } catch (exception) {
       Log.e(`Failed to windowStage`);

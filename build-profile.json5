@@ -5,13 +5,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "storeFile": "/Users/macmima1234/Documents/harmony/StepSportszc/steps1105.p12",
-          "storePassword": "00000018EC3284B7A3B9C4D53F30B83DEBDF9EF4F08A2D834C5A0B3C6229C0FEB7A3A575793E4880",
+          "storeFile": "/Users/macmima1234/Documents/harmony/StepSportszc/steps1107.p12",
+          "storePassword": "0000001884C42ED274CDC9DCD90B097BE2B6FA7A6D3964F0853DE95FD7259CC66CE0B7B86EE4EC39",
           "keyAlias": "novcat",
-          "keyPassword": "00000018B840E8A5B45DACE894B985BF843DB1D662C3418B35D646D839E5514B1A7E2DC3AB9BEBCC",
+          "keyPassword": "00000018682547B69981EC774F4B8D53C89AAE8B0311D508D044C834A485A6BEC6E922A9C929AF87",
           "signAlg": "SHA256withECDSA",
-          "profile": "/Users/macmima1234/Documents/harmony/StepSportszc/steps1105Release.p7b",
-          "certpath": "/Users/macmima1234/Documents/harmony/StepSportszc/steps1105.cer"
+          "profile": "/Users/macmima1234/Documents/harmony/StepSportszc/steps1107Release.p7b",
+          "certpath": "/Users/macmima1234/Documents/harmony/StepSportszc/steps1107.cer"
         }
       }
     ],

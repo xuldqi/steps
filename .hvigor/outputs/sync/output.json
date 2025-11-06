@@ -2,9 +2,6 @@
   "ohos-module-entry": {
     "SELECT_TARGET": "default",
     "MODULE_BUILD_DIR": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build",
-    "DEPENDENCY_INFO": {
-      "@mcui/mccharts": "/Users/macmima1234/Documents/harmony/StepSportszc/oh_modules/.ohpm/@mcui+mccharts@2.8.9/oh_modules/@mcui/mccharts"
-    },
     "TARGETS": {
       "default": {
         "SOURCE_ROOT": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/src/main",
@@ -22,10 +19,11 @@
           "JS_SUPER_VISUAL_PATH": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build/default/cache/default/default@CompileJS/jsbundle",
           "WORKER_LOADER": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build/default/intermediates/loader/default/loader.json",
           "MANIFEST_JSON": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build/default/intermediates/manifest/default",
-          "OUTPUT_METADATA_JSON": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build/default/intermediates/hap_metadata/default/output_metadata.json"
+          "OUTPUT_METADATA_JSON": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build/default/intermediates/hap_metadata/default/output_metadata.json",
+          "SOURCE_MAP_DIR": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build/default/intermediates/source_map/default"
         },
         "BUILD_OPTION": {
-          "debuggable": true
+          "debuggable": false
         }
       },
       "ohosTest": {
@@ -44,7 +42,8 @@
           "JS_SUPER_VISUAL_PATH": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build/default/cache/ohosTest/ohosTest@OhosTestCompileJS/jsbundle",
           "WORKER_LOADER": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build/default/intermediates/loader/ohosTest/loader.json",
           "MANIFEST_JSON": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build/default/intermediates/manifest/ohosTest",
-          "OUTPUT_METADATA_JSON": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build/default/intermediates/hap_metadata/ohosTest/output_metadata.json"
+          "OUTPUT_METADATA_JSON": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build/default/intermediates/hap_metadata/ohosTest/output_metadata.json",
+          "SOURCE_MAP_DIR": "/Users/macmima1234/Documents/harmony/StepSportszc/entry/build/default/intermediates/source_map/ohosTest"
         },
         "BUILD_OPTION": {
           "debuggable": true
@@ -53,12 +52,22 @@
     },
     "BUILD_OPTION": {
       "default-default": {
-        "debuggable": true,
+        "debuggable": false,
         "copyFrom": "default",
         "strictMode": {
           "caseSensitiveCheck": false
         },
-        "name": "debug"
+        "name": "release",
+        "arkOptions": {
+          "obfuscation": {
+            "ruleOptions": {
+              "enable": false,
+              "files": [
+                "./obfuscation-rules.txt"
+              ]
+            }
+          }
+        }
       }
     },
     "BUILD_PROFILE_OPT": {
@@ -93,7 +102,8 @@
           "name": "ohosTest"
         }
       ]
-    }
+    },
+    "BUILD_CACHE_DIR": ""
   },
   "ohos-project": {
     "SELECT_PRODUCT_NAME": "default",
@@ -121,39 +131,27 @@
       "app": {
         "signingConfigs": [
           {
-            "name": "release",
-            "type": "HarmonyOS",
-            "material": {
-              "certpath": "/Users/macmima1234/.ohos/config/release_StepSportszc_G7axQxNi3BAtiwIxHDVCZ-tPIaTvEAck0KJ3so3OijE=.cer",
-              "keyAlias": "debugKey",
-              "keyPassword": "0000001BDE779B6E372CA059A6089CA8481B2E57B76ADC8D5EBCB2DF036B1557E9F404AC5E53A32360AA5F",
-              "profile": "/Users/macmima1234/.ohos/config/release_StepSportszc_G7axQxNi3BAtiwIxHDVCZ-tPIaTvEAck0KJ3so3OijE=.p7b",
-              "signAlg": "SHA256withECDSA",
-              "storeFile": "/Users/macmima1234/.ohos/config/release_StepSportszc_G7axQxNi3BAtiwIxHDVCZ-tPIaTvEAck0KJ3so3OijE=.p12",
-              "storePassword": "0000001B0D07DFE4C27A4DC7919E9449CAAFCA0CD65EC6385823277E928A9B4D003D2C7F939DBD480D85D2"
-            }
-          },
-          {
             "name": "default",
             "type": "HarmonyOS",
             "material": {
-              "certpath": "/Users/macmima1234/Documents/harmony/StepSportszc/stepsnew32.cer",
+              "storeFile": "/Users/macmima1234/Documents/harmony/StepSportszc/steps1107.p12",
+              "storePassword": "0000001884C42ED274CDC9DCD90B097BE2B6FA7A6D3964F0853DE95FD7259CC66CE0B7B86EE4EC39",
               "keyAlias": "novcat",
-              "keyPassword": "00000018F25FD3015E7FA84B5D12B577E6038BC6B6C05A3EEE47BFBAB33683D8E3BE2507EA1D4F3A",
-              "profile": "/Users/macmima1234/Documents/harmony/StepSportszc/steps32Release.p7b",
+              "keyPassword": "00000018682547B69981EC774F4B8D53C89AAE8B0311D508D044C834A485A6BEC6E922A9C929AF87",
               "signAlg": "SHA256withECDSA",
-              "storeFile": "/Users/macmima1234/Documents/harmony/StepSportszc/steps32.p12",
-              "storePassword": "000000187ABDA27208029472AB7632943DD9853C0E8C83257A16721A69F4E5EBFC4B0EEFEFF1D3CA"
+              "profile": "/Users/macmima1234/Documents/harmony/StepSportszc/steps1107Release.p7b",
+              "certpath": "/Users/macmima1234/Documents/harmony/StepSportszc/steps1107.cer"
             }
           }
         ],
         "products": [
           {
             "name": "default",
-            "compileSdkVersion": "5.0.0(12)",
+            "compileSdkVersion": "6.0.0(20)",
             "compatibleSdkVersion": "5.0.0(12)",
-            "targetSdkVersion": "5.0.0(12)",
+            "targetSdkVersion": "6.0.0(20)",
             "runtimeOS": "HarmonyOS",
+            "signingConfig": "default",
             "buildOption": {
               "strictMode": {
                 "caseSensitiveCheck": false
@@ -192,7 +190,8 @@
     },
     "OVERALL_PROJECT_PATHS": [
       "/Users/macmima1234/Documents/harmony/StepSportszc"
-    ]
+    ],
+    "BUILD_CACHE_DIR": ""
   },
   "version": 1
 }
