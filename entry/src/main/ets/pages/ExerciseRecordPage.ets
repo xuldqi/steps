@@ -19,6 +19,12 @@ interface ExerciseProportion {
   percentage: number
 }
 
+interface TimeBucket {
+  label: string
+  start: number
+  end: number
+}
+
 @Entry
 @Component
 struct ExerciseRecordPage {
@@ -34,7 +40,9 @@ struct ExerciseRecordPage {
   @State totalCount: number = 0 // 总次数
   @State totalCalories: number = 0 // 总热量
   
-  private dates: Array<string> = new Array<string>()
+  private chartBuckets: Array<TimeBucket> = []
+  private rangeStart: number = 0
+  private rangeEnd: number = 0
   
   @State seriesRadiusOption: Options = new Options({
     title: { show: false },
@@ -123,23 +131,16 @@ struct ExerciseRecordPage {
   }
 
   private loadExerciseData() {
-    this.showWeekExerciseRecord(this.curOffset)
+    this.refreshExerciseRecords(this.curOffset)
   }
 
-  private showWeekExerciseRecord(i: number) {
-    this.top_week = DateUtils.getYMDCH(6 + 7 * i) + ' - ' + DateUtils.getYMDCH(7 * i)
-    this.dates.length = 0
-    this.dates.push(DateUtils.getYMD_(6 + 7 * i))
-    this.dates.push(DateUtils.getYMD_(5 + 7 * i))
-    this.dates.push(DateUtils.getYMD_(4 + 7 * i))
-    this.dates.push(DateUtils.getYMD_(3 + 7 * i))
-    this.dates.push(DateUtils.getYMD_(2 + 7 * i))
-    this.dates.push(DateUtils.getYMD_(1 + 7 * i))
-    this.dates.push(DateUtils.getYMD_(7 * i))
-    
-    // 获取运动数据
+  private refreshExerciseRecords(offset: number) {
+    this.curOffset = Math.max(0, offset)
+    this.prepareRangeBuckets(this.curOffset)
+    this.calculateStatistics()
+    this.updateChart()
+
     if (this.currentType === 0) {
-      // 获取所有运动数据
       this.loadAllSportTypes()
     } else {
       AppDataManager.findSportByType(this.currentType, this.exerciseCallback, false)
@@ -160,71 +161,60 @@ struct ExerciseRecordPage {
   }
 
   private calculateStatistics() {
-    this.totalDuration = 0
-    this.totalCount = this.exerciseData.length
-    this.totalCalories = 0
+    if (this.rangeEnd <= this.rangeStart) {
+      this.totalDuration = 0
+      this.totalCount = 0
+      this.totalCalories = 0
+      return
+    }
+
+    let totalDurationMs = 0
+    let totalCalories = 0
+    let totalCount = 0
 
     for (let item of this.exerciseData) {
-      // use_time 是毫秒，需要除以 1000 得到秒，再除以 3600 得到小时
-      this.totalDuration = this.totalDuration + item.use_time
-      this.totalCalories = this.totalCalories + parseFloat(item.cal || '0')
+      if (item.start_time >= this.rangeStart && item.start_time <= this.rangeEnd) {
+        totalCount = totalCount + 1
+        totalDurationMs = totalDurationMs + item.use_time
+        totalCalories = totalCalories + parseFloat(item.cal || '0')
+      }
     }
-    
-    // 转换为小时（use_time 是毫秒，所以除以 3600 * 1000）
-    this.totalDuration = Math.round(this.totalDuration / (3600 * 1000) * 10) / 10
+
+    this.totalCount = totalCount
+    this.totalDuration = Math.round(totalDurationMs / (3600 * 1000) * 10) / 10
+    this.totalCalories = Math.round(totalCalories * 10) / 10
   }
 
   private updateChart() {
-    let mm_datas = new Array<number>()
-    let mm_dates = new Array<string>()
-    
-    for (let i = 0; i < this.dates.length; i++) {
-      // 解析日期字符串 yyyy/MM/dd (DateUtils.getYMD_ 返回的是 yyyy/MM/dd 格式)
-      const dateParts = this.dates[i].split('/')
-      const year = parseInt(dateParts[0])
-      const month = parseInt(dateParts[1])
-      const day = parseInt(dateParts[2])
-      
-      // 创建 Date 对象用于获取星期几
-      const dateObj = new Date(year, month - 1, day)
-      const weekDayNum = dateObj.getDay()
-      let weekDay = "周一"
-      if (weekDayNum == 0) weekDay = "周日"
-      else if (weekDayNum == 1) weekDay = "周一"
-      else if (weekDayNum == 2) weekDay = "周二"
-      else if (weekDayNum == 3) weekDay = "周三"
-      else if (weekDayNum == 4) weekDay = "周四"
-      else if (weekDayNum == 5) weekDay = "周五"
-      else if (weekDayNum == 6) weekDay = "周六"
-      
-      // 获取月/日格式
-      const monthDay = `${month}/${day.toString().padStart(2, '0')}`
-      // 组合显示：星期几 + 月/日（使用换行符分隔）
-      mm_dates.push(`${weekDay}\n${monthDay}`)
-      
-      let dayValue = 0
-      for (let item of this.exerciseData) {
-        const itemDate = DateUtils.timeToDateNoYM2(item.start_time) // yyyy/MM/dd
-        // 直接比较日期字符串（都是 yyyy/MM/dd 格式）
-        if (this.dates[i] === itemDate) {
+    const labels: Array<string> = []
+    const values: Array<number> = []
+
+    for (const bucket of this.chartBuckets) {
+      labels.push(bucket.label)
+      let bucketValue = 0
+      for (const item of this.exerciseData) {
+        if (item.start_time >= bucket.start && item.start_time <= bucket.end) {
           if (this.currentViewType === '运动次数') {
-            dayValue = dayValue + 1
+            bucketValue = bucketValue + 1
           } else if (this.currentViewType === '运动时长') {
-            // use_time 是毫秒，转换为小时（保留1位小数）
-            dayValue = dayValue + item.use_time / (3600 * 1000) // 小时
+            bucketValue = bucketValue + item.use_time / (3600 * 1000)
           } else if (this.currentViewType === '消耗热量') {
-            dayValue = dayValue + parseFloat(item.cal || '0')
+            bucketValue = bucketValue + parseFloat(item.cal || '0')
           }
         }
       }
-      // 如果是运动时长，保留1位小数
+
       if (this.currentViewType === '运动时长') {
-        dayValue = parseFloat(dayValue.toFixed(1))
+        bucketValue = parseFloat(bucketValue.toFixed(1))
+      } else if (this.currentViewType === '运动次数') {
+        bucketValue = Math.round(bucketValue)
+      } else {
+        bucketValue = Math.round(bucketValue * 10) / 10
       }
-      mm_datas.push(dayValue)
+
+      values.push(bucketValue)
     }
-    
-    // 根据当前视图类型设置单位
+
     let unitText = ''
     if (this.currentViewType === '运动时长') {
       unitText = '小时'
@@ -237,12 +227,128 @@ struct ExerciseRecordPage {
     this.seriesRadiusOption.setVal({
       title: { show: true, text: unitText, right: 20, top: 30 },
       legend: { show: false },
-      xAxis: { data: mm_dates },
+      xAxis: { data: labels },
       series: [{ name: '', barStyle: { 
             width: 10,
             color:'#0cc291',
-            borderRadius: [4, 4] }, data: mm_datas }]
+            borderRadius: [4, 4] }, data: values }]
     })
+  }
+
+  private prepareRangeBuckets(offset: number) {
+    this.chartBuckets = []
+
+    if (this.timeRange === '周') {
+      const rangeStart = this.getDateByOffset(6 + 7 * offset)
+      const rangeEnd = this.getDateByOffset(7 * offset)
+      this.top_week = `${this.formatDateCN(rangeStart)} - ${this.formatDateCN(rangeEnd)}`
+      for (let day = 6; day >= 0; day--) {
+        const targetDate = this.getDateByOffset(day + 7 * offset)
+        this.chartBuckets.push({
+          label: `${this.getWeekLabel(targetDate)}\n${this.formatMonthDay(targetDate)}`,
+          start: this.getStartOfDay(targetDate),
+          end: this.getEndOfDay(targetDate)
+        })
+      }
+    } else if (this.timeRange === '月') {
+      const monthStart = this.getMonthStart(offset)
+      const year = monthStart.getFullYear()
+      const month = monthStart.getMonth()
+      const daysInMonth = new Date(year, month + 1, 0).getDate()
+      this.top_week = `${year}年${month + 1}月`
+      for (let day = 1; day <= daysInMonth; day++) {
+        const current = new Date(year, month, day)
+        this.chartBuckets.push({
+          label: `${day}日`,
+          start: this.getStartOfDay(current),
+          end: this.getEndOfDay(current)
+        })
+      }
+    } else {
+      const targetYear = this.getYearByOffset(offset)
+      this.top_week = `${targetYear}年`
+      for (let month = 0; month < 12; month++) {
+        const startDate = new Date(targetYear, month, 1)
+        const endDate = new Date(targetYear, month + 1, 0)
+        this.chartBuckets.push({
+          label: `${month + 1}月`,
+          start: this.getStartOfDay(startDate),
+          end: this.getEndOfDay(endDate)
+        })
+      }
+    }
+
+    if (this.chartBuckets.length > 0) {
+      this.rangeStart = this.chartBuckets[0].start
+      this.rangeEnd = this.chartBuckets[this.chartBuckets.length - 1].end
+    } else {
+      this.rangeStart = 0
+      this.rangeEnd = 0
+    }
+  }
+
+  private getDateByOffset(offsetDays: number): Date {
+    const date = new Date()
+    date.setHours(0, 0, 0, 0)
+    date.setDate(date.getDate() - offsetDays)
+    return date
+  }
+
+  private getMonthStart(offsetMonths: number): Date {
+    const date = new Date()
+    date.setHours(0, 0, 0, 0)
+    date.setDate(1)
+    date.setMonth(date.getMonth() - offsetMonths)
+    return date
+  }
+
+  private getYearByOffset(offsetYears: number): number {
+    const now = new Date()
+    return now.getFullYear() - offsetYears
+  }
+
+  private getStartOfDay(date: Date): number {
+    const copy = new Date(date)
+    copy.setHours(0, 0, 0, 0)
+    return copy.getTime()
+  }
+
+  private getEndOfDay(date: Date): number {
+    const copy = new Date(date)
+    copy.setHours(23, 59, 59, 999)
+    return copy.getTime()
+  }
+
+  private formatDateCN(date: Date): string {
+    return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
+  }
+
+  private getWeekLabel(date: Date): string {
+    const day = date.getDay()
+    switch (day) {
+      case 0:
+        return '周日'
+      case 1:
+        return '周一'
+      case 2:
+        return '周二'
+      case 3:
+        return '周三'
+      case 4:
+        return '周四'
+      case 5:
+        return '周五'
+      case 6:
+        return '周六'
+      default:
+        return '周一'
+    }
+  }
+
+  private formatMonthDay(date: Date): string {
+    const month = date.getMonth() + 1
+    const day = date.getDate().toString().padStart(2, '0')
+    return `${month}/${day}`
   }
 
   private onExerciseTypeChange(type: number) {
@@ -256,8 +362,20 @@ struct ExerciseRecordPage {
   }
 
   private onTimeRangeChange(range: string) {
+    if (this.timeRange === range) {
+      return
+    }
     this.timeRange = range
-    // 这里可以根据时间范围调整数据加载逻辑
+    this.curOffset = 0
+    this.refreshExerciseRecords(0)
+  }
+
+  private changeRangeOffset(delta: number) {
+    const nextOffset = this.curOffset + delta
+    if (nextOffset < 0) {
+      return
+    }
+    this.refreshExerciseRecords(nextOffset)
   }
 
   private openAddExercise() {
@@ -385,12 +503,12 @@ struct ExerciseRecordPage {
                   .margin({ bottom: 6 })
                 Text(type.name)
                   .fontSize(12)
-                  .fontColor(this.currentType === type.id ? '#0cc291' : '#666666')
+                  .fontColor(this.currentType === type.id ? '#FFFFFF' : '#666666')
               }
               .width('100%')
               .height(70)
               .padding(8)
-              .backgroundColor(this.currentType === type.id ? '#E8F5E8' : '#F8F8F8')
+              .backgroundColor(this.currentType === type.id ? '#0cc291' : '#F8F8F8')
               .borderRadius(16)
               .justifyContent(FlexAlign.Center)
               .onClick(() => {
@@ -430,10 +548,10 @@ struct ExerciseRecordPage {
           ForEach(['周', '月', '年'], (range: string) => {
             Text(range)
               .fontSize(14)
-              .fontColor(this.timeRange === range ? '#0cc291' : '#666666')
-              .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-              .backgroundColor(this.timeRange === range ? '#E8F5E8' : 'transparent')
-              .borderRadius(4)
+              .fontColor(this.timeRange === range ? '#FFFFFF' : '#333333')
+              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+              .backgroundColor(this.timeRange === range ? '#0cc291' : '#F5F5F5')
+              .borderRadius(16)
               .onClick(() => {
                 this.onTimeRangeChange(range)
               })
@@ -449,8 +567,7 @@ struct ExerciseRecordPage {
           .width(20)
           .height(20)
           .onClick(() => {
-            this.curOffset = this.curOffset + 1
-            this.showWeekExerciseRecord(this.curOffset)
+            this.changeRangeOffset(1)
           })
         
         Text(this.top_week)
@@ -463,8 +580,7 @@ struct ExerciseRecordPage {
           .width(20)
           .height(20)
           .onClick(() => {
-            this.curOffset = this.curOffset - 1
-            this.showWeekExerciseRecord(this.curOffset)
+            this.changeRangeOffset(-1)
           })
       }
       .width('100%')
@@ -475,11 +591,11 @@ struct ExerciseRecordPage {
         ForEach(['运动时长', '运动次数', '消耗热量'], (viewType: string) => {
           Text(viewType)
             .fontSize(14)
-            .fontColor(this.currentViewType === viewType ? '#0cc291' : '#666666')
-            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-            .backgroundColor(this.currentViewType === viewType ? '#E8F5E8' : '#F8F8F8')
-            .borderRadius(6)
-            .margin({ right: 8 })
+            .fontColor(this.currentViewType === viewType ? '#FFFFFF' : '#333333')
+            .padding({ left: 14, right: 14, top: 6, bottom: 6 })
+            .backgroundColor(this.currentViewType === viewType ? '#0cc291' : '#F5F5F5')
+            .borderRadius(16)
+            .margin({ right: 8, bottom: 4 })
             .onClick(() => {
               this.onViewTypeChange(viewType)
             })

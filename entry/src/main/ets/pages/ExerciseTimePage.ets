@@ -166,19 +166,34 @@ struct ExerciseTimePage {
                    Image($r('app.media.week_report_reward')).width(18).height(18)
                    Text(this.reward_str).fontSize(12).fontColor('#ff3e3e3e')
                  }
-          Row() {
-            McBarChart({
-              options: this.seriesRadiusOption
-            })
-          }.height('30%').margin({top:8})
+          // 柱状图白色卡片
+          Column(){
+            Row() {
+              McBarChart({
+                options: this.seriesRadiusOption
+              })
+            }
+            .height('30%')
+          }
+          .width('92%')
+          .backgroundColor('#FFFFFF')
+          .borderRadius(16)
+          .padding(16)
+          .margin({ top: 8 })
           
-          // 目标进度
-          TargetProgressView({
-            targetName: '分钟',
-            currentValue: this.currentMinutes,
-            targetValue: this.targetMinutes,
-            unit: '分钟'
-          })
+          // 目标进度白色卡片
+          Column(){
+            TargetProgressView({
+              targetName: '分钟',
+              currentValue: this.currentMinutes,
+              targetValue: this.targetMinutes,
+              unit: '分钟'
+            })
+          }
+          .width('92%')
+          .backgroundColor('#FFFFFF')
+          .borderRadius(16)
+          .padding(16)
           .margin({ top: 12 })
           Row(){
             Text(){

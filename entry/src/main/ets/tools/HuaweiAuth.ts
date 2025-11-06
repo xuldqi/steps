@@ -92,10 +92,22 @@ export class HuaweiAuth {
 
   private static transformError(err: BusinessError | Error): Error {
     if (!err || typeof (err as BusinessError).code !== 'number') {
-      return err instanceof Error ? err : new Error('登录失败');
+      const errorMsg = err instanceof Error ? err.message : '登录失败';
+      console.error('[HuaweiAuth] 错误详情:', JSON.stringify(err));
+      return new Error(errorMsg);
     }
     const businessError = err as BusinessError;
-    console.error('[HuaweiAuth] 登录失败:', businessError.code, businessError.message);
+    console.error('[HuaweiAuth] 登录失败 - 错误码:', businessError.code, '错误信息:', businessError.message);
+    console.error('[HuaweiAuth] 完整错误对象:', JSON.stringify(businessError));
+
+    // 检查是否包含指纹验证相关错误
+    const errorMessage = businessError.message || '';
+    if (errorMessage.toLowerCase().includes('fingerprint') || errorMessage.toLowerCase().includes('gateway')) {
+      console.error('[HuaweiAuth] 指纹验证失败，请检查：');
+      console.error('1. AGC 中是否已配置正确的 SHA256 指纹');
+      console.error('2. 应用签名证书是否与 AGC 配置一致');
+      console.error('3. 等待 10-30 分钟让 AGC 配置生效');
+    }
 
     switch (businessError.code) {
       case 1002:
@@ -105,9 +117,9 @@ export class HuaweiAuth {
       case 2002:
         return new Error('请先登录华为账号');
       case 6003:
-        return new Error('应用签名验证失败');
+        return new Error('应用签名验证失败，请检查 AGC 中的指纹配置');
       case 6002:
-        return new Error('应用配置错误');
+        return new Error('应用配置错误，请检查 agconnect-services.json');
       default:
         return new Error(`登录失败: ${businessError.message}`);
     }

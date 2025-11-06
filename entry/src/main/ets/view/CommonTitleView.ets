@@ -1,6 +1,7 @@
 
 import { window } from '@kit.ArkUI'
 import EntryAbility from '../entryability/EntryAbility'
+import { TITLE_SAFE_TOP_OFFSET } from '../tools/UiConstants'
 
 export interface CommonTitleData {
   str1: string,
@@ -24,8 +25,9 @@ export struct CommonTitleView {
       return 0
     }
     const avoidArea = EntryAbility.myWindowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM)
-    // 与其他页面保持一致：适度扣减，避免标题显得过低
-    return Math.max(0, avoidArea.topRect.height - 80)
+    // 与首页保持一致：状态栏高度基础上再减去统一参数，避免标题下移
+    const full = Math.max(0, avoidArea.topRect.height)
+    return Math.max(0, full - TITLE_SAFE_TOP_OFFSET)
   }
 
   build() {

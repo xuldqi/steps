@@ -532,71 +532,44 @@ struct SportRecordPage {
             .fontColor('#333333')
             .layoutWeight(1)
 
-          // 将按钮与下拉放入同一局部 Stack，使下拉锚定到按钮下方
-          Stack() {
-            Row() {
-              Text(this.selectedMetric)
+          // 周/月/年放在与“趋势查看”同一排，右对齐
+          Row() {
+            ForEach(['周', '月', '年'], (item: string, index?: number) => {
+              Text(item)
                 .fontSize(14)
-                .fontColor('#333333')
-              Text('▼')
-                .fontSize(12)
-                .fontColor('#333333')
-                .margin({ left: 4 })
-            }
-            .alignItems(VerticalAlign.Center)
-            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-            .backgroundColor('#F4F4F4')
-            .borderRadius(16)
-            .onClick(() => {
-              this.toggleMetricSelector()
-            })
-
-            if (this.showMetricSelector) {
-              Column() {
-                ForEach(this.metricOptions, (option: string, index: number) => {
-                  Text(option)
-                    .fontSize(14)
-                    .fontColor(this.selectedMetric === option ? '#333333' : '#999999')
-                    .fontWeight(this.selectedMetric === option ? 600 : 400)
-                    .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-                    .width('100%')
-                    .backgroundColor(this.selectedMetric === option ? '#F3F7F5' : '#FFFFFF')
-                    .textAlign(TextAlign.Start)
-                    .onClick(() => {
-                      this.onMetricSelect(option)
-                    })
-                }, (option: string, index: number) => `metric-${index}`)
-              }
-              .width(140)
-              .backgroundColor('#FFFFFF')
-              .borderRadius(12)
-              .border({ width: 1, color: '#EAEAEA' })
-              .align(Alignment.TopStart)
-              // 紧贴按钮底部展开
-              .margin({ top: 40 })
-            }
+                .fontColor(this.timeRange === item ? '#FFFFFF' : '#333333')
+                .fontWeight(this.timeRange === item ? FontWeight.Medium : FontWeight.Normal)
+                .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+                .backgroundColor(this.timeRange === item ? '#0cc291' : '#F0F0F0')
+                .borderRadius(16)
+                .margin({ left: (index !== undefined && index > 0) ? 8 : 0 })
+                .onClick(() => {
+                  this.setTimeRange(item)
+                })
+            }, (item: string, index: number) => `range-inline-${index}`)
           }
-          .alignSelf(ItemAlign.End)
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
 
+        // 第二排：三个指标胶囊，居中
         Row() {
-          ForEach(['周', '月', '年'], (item: string) => {
-            Text(item)
+          ForEach(this.metricOptions, (option: string, index: number) => {
+            Text(option)
               .fontSize(14)
-              .fontColor(this.timeRange === item ? '#FFFFFF' : '#333333')
-              .fontWeight(this.timeRange === item ? FontWeight.Medium : FontWeight.Normal)
-              .padding({ left: 16, right: 16, top: 6, bottom: 6 })
-              .backgroundColor(this.timeRange === item ? '#0cc291' : '#F0F0F0')
+              .fontColor(this.selectedMetric === option ? '#FFFFFF' : '#333333')
+              .fontWeight(this.selectedMetric === option ? FontWeight.Medium : FontWeight.Normal)
+              .padding({ left: 14, right: 14, top: 6, bottom: 6 })
+              .backgroundColor(this.selectedMetric === option ? '#0cc291' : '#F0F0F0')
               .borderRadius(16)
-              .margin({ left: 4, right: 4 })
-              .opacity(this.timeRange === item ? 1 : 0.8)
+              .margin({ left: index === 0 ? 0 : 12 })
               .onClick(() => {
-                console.info('[SportRecordPage] 点击时间范围:', item)
-                this.setTimeRange(item)
+                if (this.selectedMetric !== option) {
+                  this.selectedMetric = option
+                  this.refreshVisualData()
+                }
               })
-          }, (item: string, index: number) => `range-${item}-${index}`)
+          }, (option: string, index: number) => `metric-row2-${index}`)
         }
         .justifyContent(FlexAlign.Center)
         .width('100%')
@@ -636,14 +609,10 @@ struct SportRecordPage {
             .fontSize(16)
             .fontColor('#666666')
             .margin({ left: 8 })
-
-          Text(this.getRangeSummaryLabel())
-            .fontSize(14)
-            .fontColor('#666666')
-            .layoutWeight(1)
-            .textAlign(TextAlign.End)
         }
         .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
         .margin({ bottom: 16 })
 
         Row() {

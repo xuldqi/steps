@@ -764,6 +764,7 @@ struct UserProfilePage {
           this.hasSetInitialWeight = true
           await userDataManager.updateWeight(weightValue)
           Log.i('[UserProfilePage] openInitialWeightDialog confirm 保存初始=' + formatted)
+          await this.syncLatestWeight()
           await userDataManager.refreshMetrics()
           const metricsAfterInit = await userDataManager.loadMetrics()
           this.updateBodyData(metricsAfterInit)
@@ -913,7 +914,7 @@ struct UserProfilePage {
           .width('94%')
           .backgroundColor('#FFFFFF')
           .borderRadius(16)
-          .margin({ top: -240, bottom: 16 })
+          .margin({ top: -220, bottom: 16 })
 
           // 体重信息卡片
           Column() {

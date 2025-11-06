@@ -154,7 +154,7 @@ struct ChartPage {
         }
       }
     }
-
+    
     console.info('[ChartPage] calculateCalorieStats: 每日热量数据=', Array.from(dailyCalories.entries()))
     
     // 计算总热量和平均热量
@@ -192,27 +192,27 @@ struct ChartPage {
     // 遍历日期范围，查找对应的热量数据
     for (let i = 0; i < this.dates.length; i++) {
       const calories = dailyCalories.get(this.dates[i]) || 0
-
-      if (this.viewMode === 'week') {
+      
+        if (this.viewMode === 'week') {
         // 周视图：固定显示七天，包含0值，避免单点不渲染
-        const d = this.parseDateFromYMD(this.dates[i])
-        const jsDay = d.getDay() // 周日0、周一1
-        const weekDays = ['日', '一', '二', '三', '四', '五', '六']
-        mm_dates.push(weekDays[jsDay])
+          const d = this.parseDateFromYMD(this.dates[i])
+          const jsDay = d.getDay() // 周日0、周一1
+          const weekDays = ['日', '一', '二', '三', '四', '五', '六']
+          mm_dates.push(weekDays[jsDay])
         mm_datas.push(calories)
-      } else if (this.viewMode === 'month') {
+        } else if (this.viewMode === 'month') {
         // 月视图：只显示周一
-        const d = this.parseDateFromYMD(this.dates[i])
+          const d = this.parseDateFromYMD(this.dates[i])
         const jsDay = d.getDay()
         if (jsDay === 1) {
-          mm_dates.push(this.formatMDLabel(this.dates[i]))
+            mm_dates.push(this.formatMDLabel(this.dates[i]))
           mm_datas.push(calories)
-        }
-      } else {
-        // 年视图：显示月份数字
-        const d = this.parseDateFromYMD(this.dates[i])
-        const month = (d.getMonth() + 1).toString()
-        mm_dates.push(month)
+          }
+        } else {
+          // 年视图：显示月份数字
+          const d = this.parseDateFromYMD(this.dates[i])
+          const month = (d.getMonth() + 1).toString()
+          mm_dates.push(month)
         mm_datas.push(calories)
       }
     }

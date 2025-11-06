@@ -6,6 +6,7 @@ import { common } from '@kit.AbilityKit'
 import { Utils } from '../tools/Utils'
 import EntryAbility from '../entryability/EntryAbility'
 import { window } from '@kit.ArkUI'
+import { AppStateStore } from '../services/AppStateStore'
 
 @Entry
 @Component
@@ -30,7 +31,7 @@ struct Index {
     this.dialog.close()
     this.timerId = setTimeout(() => {
       Log.i('jump main delay 3s');
-      this.jumpToMain();
+      void this.jumpToMain();
     }, 1000);
   }
 
@@ -51,7 +52,7 @@ struct Index {
     }else{
       this.timerId = setTimeout(() => {
         Log.i('jump main delay 3s');
-        this.jumpToMain();
+        void this.jumpToMain();
       }, 1000);
     }
 
@@ -66,7 +67,15 @@ struct Index {
     Log.i('onBackPress');
   }
 
-  jumpToMain(){
+  private async jumpToMain(){
+    // 尝试静默登录，失败时继续跳转首页由用户主动登录
+    if (!AppStateStore.getInstance().isUserLoggedIn()) {
+      try {
+        await AppStateStore.getInstance().autoLogin();
+      } catch (error) {
+        Log.e('[Index] 自动登录失败:' + JSON.stringify(error));
+      }
+    }
     router.replaceUrl({ url: 'pages/MainTabs'},router.RouterMode.Single, (err) => {
       if (err) {
         Log.e(`Click Invoke pushUrl failed, code is ${err.code}, message is ${err.message}`);

@@ -374,9 +374,12 @@ struct StepTrendPage {
         Column(){
           // 控制区域和图表区域 - 合并为一个白色卡片
           Column(){
-            // 维度切换（周 / 月 / 年）
+            // 第一排：左“趋势查看”，右侧  周/月/年  胶囊（右对齐）
             Row(){
-              Button('周')
+              Text('趋势查看').fontSize(16).fontWeight(500).fontColor('#333333').layoutWeight(1)
+
+              Row(){
+                Button('周')
                 .backgroundColor(this.viewMode === 'week' ? '#0cc291' : '#EEEEEE')
                 .fontColor(this.viewMode === 'week' ? '#FFFFFF' : '#333333')
                 .fontWeight(this.viewMode === 'week' ? FontWeight.Medium : FontWeight.Normal)
@@ -412,7 +415,8 @@ struct StepTrendPage {
                   this.windowEndDate = new Date(); 
                   this.loadByViewMode() 
                 })
-            }.margin({ top:16, bottom:8 }).width('100%').justifyContent(FlexAlign.Center)
+              }
+            }.margin({ top:16, bottom:8 }).width('100%')
 
             // 日期范围选择器
             Row(){

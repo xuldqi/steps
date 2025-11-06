@@ -1,8 +1,9 @@
 import { router } from '@kit.ArkUI';
 import promptAction from '@ohos.promptAction';
 import { AppStateStore } from '../services/AppStateStore';
-import { HuaweiAuth } from '../tools/HuaweiAuth';
+import { HuaweiAuth, HuaweiUserInfo } from '../tools/HuaweiAuth';
 import { CommonTitleView } from '../view/CommonTitleView';
+import preferencesUtil from '../tools/DataPreUtils';
 
 @Entry
 @Component
@@ -25,7 +26,7 @@ struct LoginPage {
     this.isProcessing = true;
     try {
       const userInfo = await HuaweiAuth.login();
-      await this.handleLogin(true, userInfo.unionID);
+      await this.handleLogin(userInfo);
     } catch (error) {
       const message = (error as Error)?.message ?? '登录失败，请稍后重试';
       promptAction.showToast({ message, duration: 2000 });
@@ -33,15 +34,24 @@ struct LoginPage {
     }
   }
 
-  private async handleLogin(success: boolean, unionId?: string): Promise<void> {
-    const resolvedId = unionId?.trim() ?? '';
-    if (!success || resolvedId.length === 0) {
+  private async handleLogin(userInfo: HuaweiUserInfo): Promise<void> {
+    const resolvedId = (userInfo.unionID?.trim() ?? userInfo.openID?.trim() ?? '');
+    if (resolvedId.length === 0) {
       promptAction.showToast({ message: '未获取到华为账号 ID，请稍后重试', duration: 2000 });
       this.isProcessing = false;
       return;
     }
     try {
-      await this.store.loginWithUnionId(resolvedId);
+      const displayName = userInfo.displayName?.trim() ?? '华为账号用户';
+      await preferencesUtil.putPreferenceValue('steps_ohos', 'userNickname', displayName);
+      await preferencesUtil.putPreferenceValue('steps_ohos', 'userName', displayName);
+      if (userInfo.avatarUri) {
+        await preferencesUtil.putPreferenceValue('steps_ohos', 'userAvatarUri', userInfo.avatarUri);
+      }
+      await this.store.loginWithUnionId(resolvedId, {
+        nickname: displayName,
+        avatar: userInfo.avatarUri
+      });
       promptAction.showToast({ message: '登录成功', duration: 1500 });
       router.back();
     } catch (error) {

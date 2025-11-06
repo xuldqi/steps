@@ -71,7 +71,7 @@ struct MainTabs {
   @State currentSubIndex: number = 0
   //Tab的底色
   @State tabColor: string = '#F5F5F5'
-  @State version: string = '1.0.1' // 应用版本号
+  @State version: string = '1.1.8' // 应用版本号
   private controller: TabsController = new TabsController()
   private subController: TabsController = new TabsController();
   private panOptionRight: PanGestureOptions = new PanGestureOptions({ direction: PanDirection.Right });
@@ -1603,22 +1603,6 @@ struct MainTabs {
                 this.buildBodyDataCards()
 
                 Column(){
-                  // 个人信息手机清单（无图标）
-                  Row(){
-                    Text('个人信息手机清单').layoutWeight(1).fontSize(15).fontColor('#333333')
-                    Image($r('app.media.right_point')).width(15).height(15).fillColor('#999999')
-                  }.width('100%').padding(12).onClick(() => {
-                    router.pushUrl({ url: 'pages/ListCollectPage' })
-                  })
-                  
-                  // 个人信息共享清单（无图标）
-                  Row(){
-                    Text('个人信息共享清单').layoutWeight(1).fontSize(15).fontColor('#333333')
-                    Image($r('app.media.right_point')).width(15).height(15).fillColor('#999999')
-                  }.width('100%').padding(12).onClick(() => {
-                    router.pushUrl({ url: 'pages/ListSharePage' })
-                  })
-                  
                   // 设置项：用户协议
                   Row(){
                     Text('用户协议').layoutWeight(1).fontSize(15).fontColor('#333333')
