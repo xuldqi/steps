@@ -19,24 +19,25 @@
     "IS_HVIGORFILE_TYPE_CHECK": false,
     "TASK_TIME": {
       "1043bfc77febe75fafec0c4309faccf1": {
-        "CreateModuleInfo": 1032140,
-        "ConfigureCmake": 401598,
-        "PreCheckSyscap": 405348,
-        "GeneratePkgContextInfo": 4254759,
-        "ProcessIntegratedHsp": 1108607,
-        "BuildNativeWithCmake": 534835,
-        "SyscapTransform": 2304729,
-        "ProcessStartupConfig": 1323676,
-        "BuildNativeWithNinja": 1816547,
-        "GenerateLoaderJson": 13991608,
-        "BuildJS": 2284939,
-        "CompileArkTS": 1662277673,
-        "ProcessCompiledResources": 559679,
-        "PackageHap": 80748393,
-        "PackingCheck": 5072828,
-        "SignHap": 255557694,
-        "CollectDebugSymbol": 14550101,
-        "assembleHap": 227075
+        "CreateModuleInfo": 1050200,
+        "ConfigureCmake": 446449,
+        "PreCheckSyscap": 581473,
+        "GeneratePkgContextInfo": 4798975,
+        "ProcessIntegratedHsp": 1258363,
+        "BuildNativeWithCmake": 365634,
+        "SyscapTransform": 14641362,
+        "ProcessStartupConfig": 1532970,
+        "BuildNativeWithNinja": 1173232,
+        "CompileResource": 679670015,
+        "BuildJS": 2313687,
+        "CompileArkTS": 11819419483,
+        "GeneratePkgModuleJson": 2256000,
+        "ProcessCompiledResources": 961915,
+        "PackageHap": 187445403,
+        "PackingCheck": 12201021,
+        "SignHap": 350310513,
+        "CollectDebugSymbol": 15994762,
+        "assembleHap": 559496
       }
     },
     "APIS": [
@@ -47,6 +48,8 @@
       "getAllNodes",
       "getRootNode",
       "getNodeName",
+      "getStartParams",
+      "buildFinished",
       "getNodePath",
       "subNodes",
       "getExtraOption",
@@ -57,11 +60,10 @@
       "getParameter",
       "getProductName",
       "nodesEvaluated",
-      "getCommandEntryTask",
-      "getStartParams"
+      "getCommandEntryTask"
     ],
     "CONFIG_PROPERTIES": {},
-    "TOTAL_TIME": 2661234660,
-    "BUILD_ID": "202511070157286260"
+    "BUILD_ID": "202511070225361640",
+    "TOTAL_TIME": 15472912682
   }
 }
